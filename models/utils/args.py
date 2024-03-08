@@ -64,7 +64,7 @@ def parse_args():
     epoch_capability_group.add_argument('--num-epochs',
                     help='number of epochs when clients train on data;',
                     type=int,
-                    default=1)
+                    default=2)
 
     parser.add_argument('-t',
                     help='simulation time: small, medium, or large;',

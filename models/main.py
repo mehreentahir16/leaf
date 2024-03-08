@@ -82,7 +82,6 @@ def main():
     # Define accuracy thresholds and initialize time tracking for each
     accuracy_thresholds = {50: None, 60: None, 70: None, 80: None, 90: None}
  
-    time_to_reach_accuracy = None
     total_training_time = 0
 
     # Simulate training
