@@ -3,7 +3,7 @@
 from abc import ABC, abstractmethod
 import numpy as np
 import os
-import sys
+import time
 import tensorflow as tf
 
 from baseline_constants import ACCURACY_KEY
@@ -71,7 +71,7 @@ class Model(ABC):
         """
         return None, None, None, None, None
 
-    def train(self, data, num_epochs=1, batch_size=10):
+    def train(self, data, num_epochs, batch_size):
         """
         Trains the client model.
 
@@ -84,7 +84,7 @@ class Model(ABC):
             update: List of np.ndarray weights, with each weight array
                 corresponding to a variable in the resulting graph
         """
-        for _ in range(num_epochs):
+        for i in range(num_epochs):
             self.run_epoch(data, batch_size)
 
         update = self.get_params()
@@ -122,7 +122,7 @@ class Model(ABC):
                 feed_dict={self.features: x_vecs, self.labels: labels}
             )
         acc = float(tot_acc) / x_vecs.shape[0]
-        return {ACCURACY_KEY: acc, 'loss': loss}
+        return {ACCURACY_KEY: acc*100, 'loss': loss}
 
     def close(self):
         self.sess.close()

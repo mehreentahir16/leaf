@@ -2,6 +2,7 @@ import json
 import numpy as np
 import os
 from collections import defaultdict
+import tensorflow as tf
 
 
 def batch_data(data, batch_size, seed):
@@ -67,3 +68,32 @@ def read_data(train_data_dir, test_data_dir):
     assert train_groups == test_groups
 
     return train_clients, train_groups, train_data, test_data
+
+def get_model_size(model):
+    """
+    Estimates the size of the TensorFlow model by summing the sizes of its trainable parameters.
+    
+    Args:
+    - model: An instance of a TensorFlow model.
+    
+    Returns:
+    - The estimated size of the model in bytes.
+    """
+    total_size = 0
+    for variable in model.sess.run(tf.trainable_variables()):
+        # Each variable is a tf.Tensor or tf.Variable, get its size in bytes
+        total_size += variable.size * variable.itemsize
+    return total_size
+
+def get_update_size(update):
+    """
+    Calculate the size of the update in bytes.
+    
+    Args:
+    - update: A list of numpy arrays representing the model weights after training.
+    
+    Returns:
+    - total_size: The total size of the update in bytes.
+    """
+    total_size = sum(array.nbytes for array in update)
+    return total_size

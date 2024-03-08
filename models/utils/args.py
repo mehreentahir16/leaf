@@ -2,7 +2,7 @@ import argparse
 
 DATASETS = ['sent140', 'femnist', 'shakespeare', 'celeba', 'synthetic', 'reddit']
 SIM_TIMES = ['small', 'medium', 'large']
-
+CLIENT_SELECTION_STRATEGIES = ['random', 'greedy', 'price_based', 'resource_based', 'active', 'pow-d', 'promethee']  
 
 def parse_args():
     parser = argparse.ArgumentParser()
@@ -28,6 +28,11 @@ def parse_args():
                     help='number of clients trained per round;',
                     type=int,
                     default=-1)
+    parser.add_argument('--client-selection-strategy',
+                    help='strategy to select clients each round',
+                    type=str,
+                    choices=CLIENT_SELECTION_STRATEGIES,
+                    default='random')
     parser.add_argument('--batch-size',
                     help='batch size when clients train on data;',
                     type=int,

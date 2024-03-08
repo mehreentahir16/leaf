@@ -23,7 +23,7 @@ def print_metrics(
         num_samples,
         partition,
         metrics_dir, 
-        metrics_name):
+        metrics_name): 
     """Prints or appends the given metrics in a csv.
 
     The resulting dataframe is of the form:
@@ -50,7 +50,7 @@ def print_metrics(
     os.makedirs(metrics_dir, exist_ok=True)
     path = os.path.join(metrics_dir, '{}.csv'.format(metrics_name))
     
-    columns = COLUMN_NAMES + get_metrics_names(metrics)
+    columns = COLUMN_NAMES + get_metrics_names(metrics) 
     client_data = pd.DataFrame(columns=columns)
     for i, c_id in enumerate(client_ids):
         current_client = {
