@@ -58,10 +58,13 @@ class Client:
             update: set of weights
             update_size: number of bytes in update
         """
+        download_time = 0
+        training_time = 0
+        upload_time = 0
         if simulate_delays==True: 
             untrained_model_size = get_model_size(self.model)
             download_time = estimate_network_delay(untrained_model_size, self.network_config['Bandwidth'], self.network_config['Latency'])
-            time.sleep(download_time)
+            # time.sleep(download_time)
 
             if minibatch is None:
                 data = self.train_data
@@ -76,11 +79,11 @@ class Client:
                 num_epochs = 1
                 comp, update = self.model.train(data, num_epochs, num_data)
             
-            estimated_training_time = estimate_training_time(comp, self.hardware_config['CPU Count']*self.hardware_config['Cores'], self.hardware_config['Frequency'], self.hardware_config['CPU Utilization'], self.hardware_config['RAM'], self.hardware_config['Available RAM'])
-            time.sleep(estimated_training_time)
+            training_time = estimate_training_time(comp, self.hardware_config['CPU Count']*self.hardware_config['Cores'], self.hardware_config['Frequency'], self.hardware_config['CPU Utilization'], self.hardware_config['RAM'], self.hardware_config['Available RAM'])
+            # time.sleep(training_time)
             update_size = get_update_size(update)
             upload_time = estimate_network_delay(update_size, self.network_config['Bandwidth'], self.network_config['Latency'])
-            time.sleep(upload_time)
+            # time.sleep(upload_time)
 
         else: 
 
@@ -98,7 +101,7 @@ class Client:
                 comp, update = self.model.train(data, num_epochs, num_data)
         
         num_train_samples = len(data['y'])
-        return comp, num_train_samples, update
+        return comp, num_train_samples, update, download_time, training_time, upload_time
 
     def test(self, set_to_use='test'):
         """Tests self.model on self.test_data.

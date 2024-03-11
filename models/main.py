@@ -102,7 +102,7 @@ def main():
         elif selection_strategy == 'active':
             server.selected_clients = client_selection_active(clients, losses, alpha1=0.75, alpha2=0.01, alpha3=0.1, num_clients=clients_per_round)
         elif selection_strategy == 'pow-d':
-            server.selected_clients = client_selection_pow_d(clients, client_num_samples, losses, d=40, num_clients=clients_per_round)
+            server.selected_clients = client_selection_pow_d(clients, client_num_samples, losses, d=50, num_clients=clients_per_round)
         elif selection_strategy == 'promethee':
             # bootstrap_results = simulate_score_distributions(hardware_scores=hardware_scores, network_scores=network_scores, data_quality_scores=data_quality_scores, n=1000)
             weights = np.array([0.33,0.33,0.34])
@@ -114,21 +114,16 @@ def main():
 
         print("selected client IDs", c_ids)
 
-
-        start_training_time = time.time()
-
         # Simulate server model training on selected clients' data
-        sys_metrics = server.train_model(num_epochs=args.num_epochs, batch_size=args.batch_size, minibatch=args.minibatch, simulate_delays=True)
+        sys_metrics, download_time, estimated_training_time, upload_time = server.train_model(num_epochs=args.num_epochs, batch_size=args.batch_size, minibatch=args.minibatch, simulate_delays=True)
         sys_writer_fn(i + 1, c_ids, sys_metrics, c_groups, c_num_samples)
         
         # Update server model
         server.update_model()
 
-        end_training_time = time.time()
-
-        round_training_time = end_training_time - start_training_time
-        training_time[i] = round_training_time
-        total_training_time += round_training_time
+        simulated_total_time = download_time + estimated_training_time + upload_time
+        training_time[i] = simulated_total_time
+        total_training_time += simulated_total_time
 
         # Test model
         if (i + 1) % eval_every == 0 or (i + 1) == num_rounds:
@@ -157,7 +152,7 @@ def main():
         "number_of_clients": len(clients)  # Total number of clients
     }
 
-    file_name = f"results/data_{args.dataset}_selection_{args.client_selection_strategy}_clients_{args.clients_per_round}_results_update.pkl"
+    file_name = f"results/data_{args.dataset}_selection_{args.client_selection_strategy}_clients_{args.clients_per_round}_results.pkl"
 
     # Ensure the directory exists
     os.makedirs(os.path.dirname(file_name), exist_ok=True)

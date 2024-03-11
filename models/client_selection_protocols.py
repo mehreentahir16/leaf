@@ -3,7 +3,7 @@ import numpy as np
 from copy import deepcopy
 from scipy.stats import mannwhitneyu
 
-def select_clients_randomly(my_round, possible_clients, num_clients=20):
+def select_clients_randomly(my_round, possible_clients, num_clients):
     """Selects num_clients clients randomly from possible_clients.
     
     Note that within function, num_clients is set to
@@ -20,7 +20,7 @@ def select_clients_randomly(my_round, possible_clients, num_clients=20):
 
     return selected_clients
 
-def select_clients_greedy(possible_clients, costs, num_clients=20):
+def select_clients_greedy(possible_clients, costs, num_clients):
     """
     Selects clients based on the ratio of number of training samples to cost, preferring clients with more samples per cost unit.
 
@@ -38,7 +38,7 @@ def select_clients_greedy(possible_clients, costs, num_clients=20):
     # Select the top clients based on the calculated ratio
     return sorted_clients[:num_clients]
 
-def select_clients_price_based(possible_clients, costs, num_clients=20):
+def select_clients_price_based(possible_clients, costs, num_clients):
     """
     Selects clients based on the lowest cost.
 
@@ -56,7 +56,7 @@ def select_clients_price_based(possible_clients, costs, num_clients=20):
     # Select the clients with the lowest costs
     return sorted_clients[:num_clients]
 
-def select_clients_resource_based(possible_clients, hardware_scores, num_clients=20):
+def select_clients_resource_based(possible_clients, hardware_scores, num_clients):
     """
     Selects clients based on the lowest cost.
 
@@ -118,7 +118,7 @@ def client_selection_active(clients, losses, alpha1=0.75, alpha2=0.01, alpha3=0.
     
     return selected_clients
 
-def client_selection_pow_d(clients, client_num_samples, losses, d, num_clients=20):
+def client_selection_pow_d(clients, client_num_samples, losses, d, num_clients):
     """
     Updated Power-of-Choice client selection 
     
@@ -215,7 +215,7 @@ def client_selection_pow_d(clients, client_num_samples, losses, d, num_clients=2
 #     return selected_clients
 
 
-def promethee_selection(clients, hardware_scores, network_scores, data_quality_scores, weights, num_clients):
+def promethee_selection(clients, hardware_scores, network_scores, data_quality_scores, weights, num_clients, top_percentage=10):
 
     # Extract client IDs directly from the clients list
     client_ids = [client.id for client in clients]
@@ -258,7 +258,20 @@ def promethee_selection(clients, hardware_scores, network_scores, data_quality_s
     # Step 6: Rank the clients based on net flows
     ranking = sorted(list(enumerate(phi)), key=lambda x: x[1], reverse=True)
 
-    return [clients[idx] for idx, _ in ranking[:num_clients]]
+    # Determine the number of top clients based on the given percentage
+    top_clients_count = int(np.ceil(len(clients) * (top_percentage / 100.0)))
+    
+    # Filter the top percentage of clients
+    top_clients = ranking[:top_clients_count]
+    
+    # Randomly select 'num_clients' from the top percentage of clients
+    selected_indices = random.sample([idx for idx, _ in top_clients], num_clients)
+
+    if top_clients_count >= num_clients:
+        # Return the selected clients
+        return [clients[idx] for idx in selected_indices]
+    else:
+        return [clients[idx] for idx, _ in ranking[:num_clients]]
     
     # selected_clients = []
     # total_cost = 0

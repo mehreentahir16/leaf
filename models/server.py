@@ -12,46 +12,41 @@ class Server:
         self.updates = []
 
     def train_model(self, num_epochs, batch_size=10, minibatch=None, clients=None, simulate_delays=True):
-        """Trains self.model on given clients with an option to simulate delays, using multithreading."""
-
         if clients is None:
             clients = self.selected_clients
 
-        sys_metrics = {
-            c.id: {BYTES_WRITTEN_KEY: 0, BYTES_READ_KEY: 0, LOCAL_COMPUTATIONS_KEY: 0} for c in clients}
+        sys_metrics = {c.id: {BYTES_WRITTEN_KEY: 0, BYTES_READ_KEY: 0, LOCAL_COMPUTATIONS_KEY: 0} for c in clients}
+        
+        # Lists to hold times for each client
+        download_times = []
+        training_times = []
+        upload_times = []
 
-        # Define a function to handle training with simulation of delays
-        def train_with_delays(c):
+        def train_client(c):
             c.model.set_params(self.model)
-            comp, num_samples, update = c.train(num_epochs, batch_size, minibatch, simulate_delays=True)
-            sys_metrics[c.id][BYTES_READ_KEY] += c.model.size
-            sys_metrics[c.id][BYTES_WRITTEN_KEY] += c.model.size
-            sys_metrics[c.id][LOCAL_COMPUTATIONS_KEY] = comp
-            self.updates.append((num_samples, update))
+            comp, num_samples, update, d_time, t_time, u_time = c.train(num_epochs, batch_size, minibatch, simulate_delays)
+            with threading.Lock():
+                sys_metrics[c.id][BYTES_READ_KEY] += c.model.size
+                sys_metrics[c.id][BYTES_WRITTEN_KEY] += c.model.size
+                sys_metrics[c.id][LOCAL_COMPUTATIONS_KEY] = comp
+                self.updates.append((num_samples, update))
+                # Store times for each client
+                download_times.append(d_time)
+                training_times.append(t_time)
+                upload_times.append(u_time)
 
-        # Define a function to handle training without simulation of delays
-        def train_without_delays(c):
-            c.model.set_params(self.model)
-            comp, num_samples, update = c.train(num_epochs, batch_size, minibatch, simulate_delays=False)
-            sys_metrics[c.id][BYTES_READ_KEY] += c.model.size
-            sys_metrics[c.id][BYTES_WRITTEN_KEY] += c.model.size
-            sys_metrics[c.id][LOCAL_COMPUTATIONS_KEY] = comp
-            self.updates.append((num_samples, update))
-
-        # Choose the appropriate function based on simulate_delays
-        train_function = train_with_delays if simulate_delays else train_without_delays
-
-        # Create and start a thread for each client using the selected function
-        threads = [threading.Thread(target=train_function, args=(c,)) for c in clients]
+        threads = [threading.Thread(target=train_client, args=(c,)) for c in clients]
         for thread in threads:
             thread.start()
-
-        # Wait for all threads to complete
         for thread in threads:
             thread.join()
 
-        return sys_metrics
+        # Use the maximum time spent in any operation across all clients as the simulated time for that operation
+        total_download_time = max(download_times) if download_times else 0
+        total_training_time = max(training_times) if training_times else 0
+        total_upload_time = max(upload_times) if upload_times else 0
 
+        return sys_metrics, total_download_time, total_training_time, total_upload_time
 
     def update_model(self):
         total_weight = 0.
@@ -107,7 +102,7 @@ class Server:
         losses = {}
 
         # Train and test each client to get accuracy
-        sys_metrics= self.train_model(clients=clients, num_epochs=1, simulate_delays=False)  # Assume this updates each client's model
+        sys_metrics, _, _, _= self.train_model(clients=clients, num_epochs=1, simulate_delays=False)  
         accuracy_metrics = self.test_model(clients_to_test=clients, set_to_use='test')  # Get test metrics
 
         for c in clients:
