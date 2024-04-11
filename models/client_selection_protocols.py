@@ -3,7 +3,7 @@ import numpy as np
 from copy import deepcopy
 from scipy.stats import mannwhitneyu
 
-def select_clients_randomly(my_round, possible_clients, num_clients):
+def select_clients_randomly(my_round, possible_clients, costs, num_clients, budget):
     """Selects num_clients clients randomly from possible_clients.
     
     Note that within function, num_clients is set to
@@ -16,11 +16,23 @@ def select_clients_randomly(my_round, possible_clients, num_clients):
         list of (num_train_samples, num_test_samples)
     """
     np.random.seed(my_round)
-    selected_clients = np.random.choice(possible_clients, num_clients, replace=False)
-
+    
+    if budget is None:
+        selected_clients = np.random.choice(possible_clients, num_clients, replace=False)
+    else:
+        selected_clients = []
+        total_cost = 0
+        for client in possible_clients:
+            client_cost = costs[str(client.id)]
+            if total_cost + client_cost <= budget:
+                selected_clients.append(client)
+                total_cost += client_cost
+            else:
+                continue
+    
     return selected_clients
 
-def select_clients_greedy(possible_clients, costs, num_clients):
+def select_clients_greedy(possible_clients, costs, num_clients, budget):
     """
     Selects clients based on the ratio of number of training samples to cost, preferring clients with more samples per cost unit.
 
@@ -32,13 +44,24 @@ def select_clients_greedy(possible_clients, costs, num_clients):
     Returns:
         A list of selected Client objects.
     """
-    # Sort possible clients based on the ratio of their training samples to their cost
     sorted_clients = sorted(possible_clients, key=lambda client: client.num_train_samples / costs[str(client.id)], reverse=True)
     
-    # Select the top clients based on the calculated ratio
-    return sorted_clients[:num_clients]
+    if budget is None:
+        return sorted_clients[:num_clients]
+    
+    selected_clients = []
+    total_cost = 0
+    for client in sorted_clients:
+        client_cost = costs[str(client.id)]
+        if total_cost + client_cost <= budget:
+            selected_clients.append(client)
+            total_cost += client_cost
+        else:
+            continue
+    
+    return selected_clients
 
-def select_clients_price_based(possible_clients, costs, num_clients):
+def select_clients_price_based(possible_clients, costs, num_clients, budget=None):
     """
     Selects clients based on the lowest cost.
 
@@ -50,31 +73,56 @@ def select_clients_price_based(possible_clients, costs, num_clients):
     Returns:
         A list of selected Client objects.
     """
-    # Sort clients by their associated cost in ascending order
     sorted_clients = sorted(possible_clients, key=lambda client: costs[str(client.id)])
     
-    # Select the clients with the lowest costs
-    return sorted_clients[:num_clients]
+    if budget is None:
+        return sorted_clients[:num_clients]
+    
+    selected_clients = []
+    total_cost = 0
+    for client in sorted_clients:
+        client_cost = costs[str(client.id)]
+        if total_cost + client_cost <= budget:
+            selected_clients.append(client)
+            total_cost += client_cost
+        else:
+            continue
+    
+    return selected_clients
 
-def select_clients_resource_based(possible_clients, hardware_scores, num_clients):
+def select_clients_resource_based(possible_clients, hardware_scores, network_scores, costs, num_clients, budget=None):
     """
-    Selects clients based on the lowest cost.
+    Selects clients based on a combined score of hardware and network performance, aiming to minimize delay.
 
     Args:
         possible_clients: List of Client objects from which to select.
-        costs: Dictionary mapping client IDs to their associated costs.
-        num_clients: Number of clients to select; default is 20.
+        hardware_scores: Dictionary mapping client IDs to their hardware scores.
+        network_scores: Dictionary mapping client IDs to their network scores.
+        num_clients: Number of clients to select.
 
     Returns:
         A list of selected Client objects.
     """
-    # Sort clients by their associated cost in ascending order
-    sorted_clients = sorted(possible_clients, key=lambda client: hardware_scores[str(client.id)])
+    combined_scores = {client: hardware_scores[str(client.id)] + network_scores[str(client.id)] for client in possible_clients}
+    sorted_clients = sorted(possible_clients, key=lambda client: combined_scores[client], reverse=True)
     
-    # Select the clients with the lowest costs
-    return sorted_clients[:num_clients]
+    if budget is None:
+        return sorted_clients[:num_clients]
+    
+    selected_clients = []
+    total_cost = 0
+    for client in sorted_clients:
+        client_cost = costs[str(client.id)]
+        if total_cost + client_cost <= budget:
+            selected_clients.append(client)
+            total_cost += client_cost
+        else: 
+            continue
+    
+    return selected_clients
 
-def client_selection_active(clients, losses, alpha1=0.75, alpha2=0.01, alpha3=0.1, num_clients=20):
+
+def client_selection_active(clients, losses, costs, alpha1=0.75, alpha2=0.01, alpha3=0.1, num_clients=20, budget=None):
     """
     Active client selection based on performance (loss).
 
@@ -91,34 +139,32 @@ def client_selection_active(clients, losses, alpha1=0.75, alpha2=0.01, alpha3=0.
     """
     # Calculate values based on loss, emphasizing according to alpha2
     values = np.exp(np.array([losses[client.id] for client in clients]) * alpha2)
-    
-    # Drop a portion of clients based on alpha1, focusing on the higher losses
     num_drop = len(clients) - int(alpha1 * len(clients))
     drop_client_idxs = np.argsort([losses[client.id] for client in clients])[:num_drop]
     
-    # Adjust probabilities for remaining clients
     probs = deepcopy(values)
-    probs[drop_client_idxs] = 0  # Zero out dropped clients
-    probs /= np.sum(probs)  # Normalize
+    probs[drop_client_idxs] = 0
+    probs /= np.sum(probs)
     
-    # Select clients based on adjusted probabilities
-    num_select = int((1 - alpha3) * num_clients)
-    selected_idxs = np.random.choice(range(len(clients)), num_select, p=probs, replace=False)
-    
-    # Select additional clients randomly for diversity
-    not_selected = list(set(range(len(clients))) - set(selected_idxs))
-    if alpha3 * num_clients > 1:  # Ensure there's a need for random selection
-        selected_idxs_random = np.random.choice(not_selected, num_clients - num_select, replace=False)
-        selected_client_idxs = np.concatenate((selected_idxs, selected_idxs_random), axis=0)
+    selected_clients = []
+    if budget is None:
+        num_select = int((1 - alpha3) * num_clients)
+        selected_idxs = np.random.choice(range(len(clients)), num_select, p=probs, replace=False)
+        selected_clients = [clients[idx] for idx in selected_idxs]
     else:
-        selected_client_idxs = selected_idxs
-    
-    # Convert indices to client objects
-    selected_clients = [clients[idx] for idx in selected_client_idxs]
+        total_cost = 0
+        for idx, client in enumerate(clients):
+            if probs[idx] > 0:  # Client was not dropped
+                client_cost = costs[client.id]
+                if total_cost + client_cost <= budget:
+                    selected_clients.append(client)
+                    total_cost += client_cost
+                else:
+                    continue
     
     return selected_clients
 
-def client_selection_pow_d(clients, client_num_samples, losses, d, num_clients):
+def client_selection_pow_d(clients, client_num_samples, losses, costs, d, num_clients, budget=None):
     """
     Updated Power-of-Choice client selection 
     
@@ -148,74 +194,30 @@ def client_selection_pow_d(clients, client_num_samples, losses, d, num_clients):
 
     # Select clients with the highest loss from candidates
     candidate_clients.sort(key=lambda client: losses[client.id], reverse=True)
-    selected_clients = candidate_clients[:num_clients]
+    if budget is None:
+        selected_clients = candidate_clients[:num_clients]
+    else:
+        selected_clients = []
+        total_cost = 0
+        for client in candidate_clients:
+            client_cost = costs[str(client.id)]
+            if total_cost + client_cost <= budget:
+                selected_clients.append(client)
+                total_cost += client_cost
+            else:
+                continue
 
     return selected_clients
 
-# def stochastic_preference(distribution_a, distribution_b, alternative='greater'):
-#     """
-#     Compute preference score using the Mann-Whitney U test.
+def normalize_scores(scores):
+    """Normalize an array of scores to a [0, 1] range."""
+    min_score = np.min(scores)
+    max_score = np.max(scores)
+    return (scores - min_score) / (max_score - min_score)
 
-#     Parameters:
-#     - distribution_a (np.array): Bootstrap distribution of scores for client A.
-#     - distribution_b (np.array): Bootstrap distribution of scores for client B.
-#     - alternative (str): Defines the alternative hypothesis ('greater', 'less', 'two-sided').
+def promethee_selection(my_round, clients, hardware_scores, network_scores, data_quality_scores, weights, costs, num_clients, budget=None, top_percentage=30):
 
-#     Returns:
-#     - float: Preference score (0 to 1), indicating the strength of preference of A over B.
-#     """
-
-#     _, p_value = mannwhitneyu(distribution_a, distribution_b, alternative='two-sided')
-#     # print(f"P-value: {p_value}")
-#     preference_score = 1 - p_value  # Higher score indicates stronger preference
-#     return preference_score
-
-# def stochastic_promethee_selection(clients, bootstrap_results, weights, num_clients=20):
-#     """
-#     Selects clients based on Stochastic PROMETHEE method incorporating bootstrap distributions.
-
-#     Parameters:
-#     - clients (list of Client objects): All available clients.
-#     - bootstrap_results (dict): Distributions of scores for each criterion per client.
-#     - weights (dict): Weights for criteria (hardware, network, data_quality).
-#     - num_clients (int): Number of clients to select.
-
-#     Returns:
-#     - list: Selected Client objects.
-#     """
-#     num_clients_total = len(clients)
-#     aggregated_preferences = np.zeros((num_clients_total, num_clients_total))
-
-#     for criterion, weight in weights.items():
-#         # print(f"Processing criterion: {criterion}")
-#         for i in range(num_clients_total):
-#             for j in range(num_clients_total):
-#                 if i != j:
-#                     client_i_id = str(clients[i].id)  # Ensure client ID is used as a string if necessary
-#                     client_j_id = str(clients[j].id)
-#                     if client_i_id in bootstrap_results[criterion] and client_j_id in bootstrap_results[criterion]:
-#                         distribution_i = bootstrap_results[criterion][client_i_id]
-#                         distribution_j = bootstrap_results[criterion][client_j_id]
-#                         # Ensure distributions are numpy arrays
-#                         distribution_i = np.array(distribution_i)
-#                         distribution_j = np.array(distribution_j)
-#                         # print(f"Client {client_i_id} vs Client {client_j_id}: shapes {distribution_i.shape}, {distribution_j.shape}")
-#                         preference_score = stochastic_preference(distribution_i, distribution_j)
-#                         aggregated_preferences[i, j] += weight * preference_score
-#                     else:
-#                         break
-
-#     phi_plus = np.sum(aggregated_preferences, axis=1)
-#     phi_minus = np.sum(aggregated_preferences, axis=0)
-#     net_flows = phi_plus - phi_minus
-
-#     ranked_indices = np.argsort(-net_flows)[:num_clients]
-#     selected_clients = [clients[idx] for idx in ranked_indices]
-
-#     return selected_clients
-
-
-def promethee_selection(clients, hardware_scores, network_scores, data_quality_scores, weights, num_clients, top_percentage=10):
+    np.random.seed(my_round)
 
     # Extract client IDs directly from the clients list
     client_ids = [client.id for client in clients]
@@ -225,11 +227,16 @@ def promethee_selection(clients, hardware_scores, network_scores, data_quality_s
     network_scores = [network_scores[client_id] for client_id in client_ids]
     data_quality_scores = [data_quality_scores[client_id] for client_id in client_ids]
 
-    # Convert the aligned scores into a 2D numpy array (n_clients, n_criteria)
+    # Normalize the scores to a [0, 1] range
+    hardware_scores = normalize_scores(np.array(hardware_scores))
+    network_scores = normalize_scores(np.array(network_scores))
+    data_quality_scores = normalize_scores(np.array(data_quality_scores))
+
+    # Convert the aligned and normalized scores into a 2D numpy array (n_clients, n_criteria)
     X = np.array([hardware_scores, network_scores, data_quality_scores]).T
     
     # Step 2: Define preference functions (simplest is a linear preference function)
-    def preference_function(a, b, q=0, p=1):
+    def preference_function(a, b, q=0.05, p=1):
         diff = a - b
         if diff <= q:
             return 0
@@ -258,30 +265,31 @@ def promethee_selection(clients, hardware_scores, network_scores, data_quality_s
     # Step 6: Rank the clients based on net flows
     ranking = sorted(list(enumerate(phi)), key=lambda x: x[1], reverse=True)
 
-    # Determine the number of top clients based on the given percentage
     top_clients_count = int(np.ceil(len(clients) * (top_percentage / 100.0)))
-    
+        
     # Filter the top percentage of clients
     top_clients = ranking[:top_clients_count]
     
     # Randomly select 'num_clients' from the top percentage of clients
-    selected_indices = random.sample([idx for idx, _ in top_clients], num_clients)
+    selected_indices_ = random.sample([idx for idx, _ in top_clients], num_clients)
 
-    if top_clients_count >= num_clients:
-        # Return the selected clients
-        return [clients[idx] for idx in selected_indices]
+    if budget is None:
+        # Determine the number of top clients based on the given percentage
+        return [clients[idx] for idx in selected_indices_]
+        
+        # return [clients[idx] for idx, _ in ranking[:num_clients]]
+
     else:
-        return [clients[idx] for idx, _ in ranking[:num_clients]]
-    
-    # selected_clients = []
-    # total_cost = 0
-    # for idx, _ in ranking:
-    #     client = clients[idx]
-    #     cost = client.calculate_cost()
-    #     if total_cost + cost <= budget:
-    #         selected_clients.append(client)
-    #         total_cost += cost
-    #     else:
-    #         pass
+        selected_indices = []
+        total_cost = 0
+        for idx in selected_indices_:
+            client_cost = costs[str(clients[idx].id)]
+            if total_cost + client_cost <= budget:
+                selected_indices.append(idx)
+                total_cost += client_cost   
+            else:
+                continue 
+        print("total cost", total_cost)
 
-    # return selected_clients
+    # Return the selected clients
+    return [clients[idx] for idx in selected_indices]

@@ -35,15 +35,9 @@ def estimate_training_time(comp, cpu_cores, cpu_frequency_ghz, cpu_utilization, 
     memory_availability_factor = available_memory / total_memory
     memory_impact_factor = 1 / memory_availability_factor
 
-    # memory_usage_percentage = ((total_memory - available_memory) / total_memory)
-    # memory_adjustment = 1 if memory_usage_percentage <= 0.5 else 0.5
-
-    # print("memory_impact_factor", memory_adjustment)
-
     training_time_seconds = (comp / (adjusted_processing_capacity * 1e9 )) * memory_impact_factor
 
     return training_time_seconds
-
 
 def computation_utility(cpu_count, cpu_cores, cpu_frequency, gpu_presence, gamma=1):
     """Calculate the utility of CPU (including count) and GPU."""
@@ -70,3 +64,4 @@ def calculate_network_score(bandwidth, latency, w_bandwidth=0.7, w_responsivenes
 
 def calculate_data_quality_score(data_size, loss, w_size=0.7, w_loss=0.3):
     return w_size * data_size + w_loss * loss
+    # return data_size/cost

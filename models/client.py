@@ -1,12 +1,13 @@
-import time
 import random
 import warnings
+import numpy as np
 from utils.model_utils import get_model_size, get_update_size
 from utils.client_resource_utils import estimate_network_delay, estimate_training_time
 
 class Client:
     
     def __init__(self, client_id, group=None, train_data={'x' : [],'y' : []}, eval_data={'x' : [],'y' : []}, model=None):
+        self.seed = np.random.seed(123)
         self._model = model
         self.id = client_id
         self.group = group
@@ -17,6 +18,8 @@ class Client:
 
     def assign_hardware(self):
         """Randomly assigns detailed hardware configuration, including separate RAM values."""
+        if self.seed is not None:
+            random.seed(self.seed)
         categories = {
             'Low-End': {'CPU Count': 1, 'Cores': 1, 'Frequency': 1.2, 'CPU Utilization': random.uniform(43, 100), 'GPU': 0, 'RAM': random.randint(1, 2), 'Available RAM': random.uniform(0.5, 1), 'Storage': random.uniform(1, 4)},  # GHz, GB for RAM and Storage
             'Mid-Range': {'CPU Count': 1, 'Cores': 2, 'Frequency': 2.5, 'CPU Utilization': random.uniform(25, 49), 'GPU': 0, 'RAM': random.randint(2, 4), 'Available RAM': random.uniform(1, 3), 'Storage': random.uniform(4, 8)},  # GHz, GB for RAM and Storage
@@ -36,6 +39,8 @@ class Client:
 
     def assign_network(self):
         """Randomly assigns network characteristics, allowing high-end devices to have poor network and vice versa."""
+        if self.seed is not None:
+            random.seed(self.seed+1)
         conditions = {
             'Poor': {'Bandwidth': random.uniform(1, 4), 'Latency': random.randint(20, 100)},
             'Average': {'Bandwidth': random.uniform(4, 10), 'Latency': random.randint(20, 80)},
@@ -80,7 +85,6 @@ class Client:
                 comp, update = self.model.train(data, num_epochs, num_data)
             
             training_time = estimate_training_time(comp, self.hardware_config['CPU Count']*self.hardware_config['Cores'], self.hardware_config['Frequency'], self.hardware_config['CPU Utilization'], self.hardware_config['RAM'], self.hardware_config['Available RAM'])
-            # time.sleep(training_time)
             update_size = get_update_size(update)
             upload_time = estimate_network_delay(update_size, self.network_config['Bandwidth'], self.network_config['Latency'])
             # time.sleep(upload_time)

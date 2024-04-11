@@ -129,13 +129,17 @@ class Server:
             # Cost calculation
             comp_cost = sys_metrics[c.id][LOCAL_COMPUTATIONS_KEY]  # Computational cost based on FLOPs
             net_cost = (sys_metrics[c.id][BYTES_WRITTEN_KEY] + sys_metrics[c.id][BYTES_READ_KEY]) * network_scores[c.id]  # Adjusted for network score
-            dq_cost = data_quality_scores[c.id]  # Data quality cost
+            dq_cost = data_quality_scores[c.id]
+            # data_samples = num_samples[c.id]  # Data quality cost
 
-            raw_costs[c.id] = comp_cost + net_cost + dq_cost
+            raw_costs[c.id] = (comp_cost ) + (net_cost ) + (dq_cost)
 
         # Normalize costs based on the highest raw cost
         max_cost = max(raw_costs.values())
-        costs = {c_id: (cost / max_cost) * 100 for c_id, cost in raw_costs.items()}  # Scale to 0-100
+        costs = {c_id: (cost / max_cost) * 10 for c_id, cost in raw_costs.items()}  # Scale to 0-100
+
+        # for c in clients:
+        #     data_quality_scores[c.id] = calculate_data_quality_score(data_size=num_samples[c.id], cost=costs[c.id])
 
         # Return all gathered information, including new scores
         return ids, groups, num_samples, hardware_scores, network_scores, data_quality_scores, costs, losses

@@ -88,7 +88,12 @@ class Model(ABC):
             self.run_epoch(data, batch_size)
 
         update = self.get_params()
-        comp = num_epochs * (len(data['y'])//batch_size) * batch_size * self.flops
+        
+        batch_processing = len(data['y'])//batch_size
+        if batch_processing == 0:
+            batch_processing = len(data['y'])/batch_size
+
+        comp = num_epochs * batch_processing * batch_size * self.flops
         return comp, update
 
     def run_epoch(self, data, batch_size):

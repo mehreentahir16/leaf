@@ -16,15 +16,56 @@ from server import Server
 from model import ServerModel
 
 from utils.args import parse_args
-from utils.bootstrap_utils import simulate_score_distributions
 from utils.model_utils import read_data
 from client_selection_protocols import select_clients_randomly, select_clients_greedy, select_clients_price_based, client_selection_active, client_selection_pow_d, select_clients_resource_based, promethee_selection
 
 STAT_METRICS_PATH = 'metrics/stat_metrics.csv'
 SYS_METRICS_PATH = 'metrics/sys_metrics.csv'
 
+def select_clients(strategy, round_number, clients, client_num_samples, costs, hardware_scores, network_scores, 
+                   data_quality_scores, losses, num_clients, budget=None):
+    """Selects clients based on the given strategy, now including client_num_samples.
+
+    Args:
+        strategy (str): The client selection strategy.
+        round_number (int): The current training round.
+        clients (list): The list of client objects.
+        client_num_samples (dict): The dictionary mapping client ids to their number of samples.
+        costs (dict): The dictionary mapping client ids to their costs.
+        hardware_scores (dict): Client hardware scores.
+        network_scores (dict): Client network scores.
+        data_quality_scores (dict): Client data quality scores.
+        losses (dict): Client losses.
+        num_clients (int): Number of clients to select.
+        budget (optional): The budget for client selection. Defaults to None.
+
+    Returns:
+        list: The list of selected client objects.
+    """
+    if strategy == 'random': 
+        selected_clients = select_clients_randomly(round_number, clients, costs, num_clients=num_clients, budget=budget)
+    elif strategy == 'greedy': 
+        selected_clients = select_clients_greedy(clients, costs, num_clients=num_clients, budget=budget)
+    elif strategy == 'price_based':
+        selected_clients = select_clients_price_based(clients, costs, num_clients=num_clients, budget=budget)
+    elif strategy == 'resource_based':
+        selected_clients = select_clients_resource_based(clients, hardware_scores, network_scores, costs, num_clients=num_clients, budget=budget)
+    elif strategy == 'active':
+        selected_clients = client_selection_active(clients, losses, costs, alpha1=0.75, alpha2=0.01, alpha3=0.1, num_clients=num_clients, budget=budget)
+    elif strategy == 'pow-d':
+        selected_clients = client_selection_pow_d(clients, client_num_samples, losses, costs, d=25, num_clients=num_clients, budget=budget)
+    elif strategy == 'promethee':
+        weights = np.array([0.1, 0.4, 0.5])
+        selected_clients = promethee_selection(round_number, clients=clients, hardware_scores=hardware_scores, network_scores=network_scores, 
+                                                data_quality_scores=data_quality_scores, weights=weights, costs=costs, num_clients=num_clients, budget=budget)
+    else:
+        raise ValueError("Invalid client selection strategy.")
+
+    return selected_clients
+
 def main():
 
+    budget = 50
     args = parse_args()
     selection_strategy = args.client_selection_strategy
 
@@ -78,41 +119,39 @@ def main():
     test_accuracies = []
     test_losses = []
     training_time = {}
+    no_selected_clients = None
 
     # Define accuracy thresholds and initialize time tracking for each
     accuracy_thresholds = {50: None, 60: None, 70: None, 80: None, 90: None}
  
     total_training_time = 0
+    total_unique_samples = 0
+    unique_client_ids = set()
 
     # Simulate training
     for i in range(num_rounds):
         print('--- Round %d of %d: Training %d Clients ---' % (i + 1, num_rounds, clients_per_round))
 
-        # client_ids, client_groups, client_num_samples, hardware_scores, network_scores, data_quality_scores, costs, losses = server.get_clients_info(clients)
-
-        # Select clients to train this round
-        if selection_strategy == 'random': 
-            server.selected_clients = select_clients_randomly(i, clients, num_clients=clients_per_round)
-        elif selection_strategy == 'greedy': 
-            server.selected_clients = select_clients_greedy(clients, costs, num_clients=clients_per_round)
-        elif selection_strategy == 'price_based':
-            server.selected_clients = select_clients_price_based(clients, costs, num_clients=clients_per_round)
-        elif selection_strategy == 'resource_based':
-            server.selected_clients = select_clients_resource_based(clients, hardware_scores, num_clients=clients_per_round)
-        elif selection_strategy == 'active':
-            server.selected_clients = client_selection_active(clients, losses, alpha1=0.75, alpha2=0.01, alpha3=0.1, num_clients=clients_per_round)
-        elif selection_strategy == 'pow-d':
-            server.selected_clients = client_selection_pow_d(clients, client_num_samples, losses, d=50, num_clients=clients_per_round)
-        elif selection_strategy == 'promethee':
-            # bootstrap_results = simulate_score_distributions(hardware_scores=hardware_scores, network_scores=network_scores, data_quality_scores=data_quality_scores, n=1000)
-            weights = np.array([0.33,0.33,0.34])
-            server.selected_clients = promethee_selection(clients=clients, hardware_scores=hardware_scores, network_scores=network_scores, data_quality_scores=data_quality_scores, weights=weights, num_clients=clients_per_round)
+        # if (i % 5 == 0) or i == 0:  # Select clients at the start and then every 5 rounds
+        server.selected_clients = select_clients(selection_strategy, i, clients, client_num_samples, costs, hardware_scores, network_scores, data_quality_scores, losses, clients_per_round, budget=budget)
 
         c_ids, c_groups, c_num_samples, c_hardware_scores, c_network_scores, c_data_quality_scores, c_costs, c_losses = server.get_clients_info(server.selected_clients)
 
         print("===========Client info=============")
+        # print("selected client IDs", c_ids)
+        # print("c_num_samples", c_num_samples)
+        # print("c_losses", c_losses)
 
-        print("selected client IDs", c_ids)
+        no_selected_clients = (len(server.selected_clients))
+        print("no_selected_clients", no_selected_clients)
+        avg_num_samples = sum(c_num_samples.values())/no_selected_clients
+        print("avg_num_samples", avg_num_samples)
+        new_clients = {client_id: samples for client_id, samples in c_num_samples.items() if client_id not in unique_client_ids}
+        total_unique_samples += sum(new_clients.values())
+        unique_client_ids.update(new_clients.keys())  # Update the set of unique client IDs
+
+        print(f"Total unique training samples so far: {total_unique_samples}")
+
 
         # Simulate server model training on selected clients' data
         sys_metrics, download_time, estimated_training_time, upload_time = server.train_model(num_epochs=args.num_epochs, batch_size=args.batch_size, minibatch=args.minibatch, simulate_delays=True)
@@ -121,7 +160,8 @@ def main():
         # Update server model
         server.update_model()
 
-        simulated_total_time = download_time + estimated_training_time + upload_time
+        simulated_total_time = download_time + estimated_training_time + upload_time 
+        print("simulated total time", simulated_total_time)
         training_time[i] = simulated_total_time
         total_training_time += simulated_total_time
 
@@ -149,10 +189,12 @@ def main():
         "losses": test_losses,
         "training_time": total_training_time,
         "time_to_reach_accuracy_thresholds": accuracy_thresholds,
-        "number_of_clients": len(clients)  # Total number of clients
+        "number_of_clients": no_selected_clients,  
+        "avg_number_of_samples": avg_num_samples,
+        "total_unique_training_samples": total_unique_samples
     }
 
-    file_name = f"results/data_{args.dataset}_selection_{args.client_selection_strategy}_clients_{args.clients_per_round}_results.pkl"
+    file_name = f"results/data_{args.dataset}_selection_{args.client_selection_strategy}_clients_{args.clients_per_round}_budget_{budget}_results_test.pkl"
 
     # Ensure the directory exists
     os.makedirs(os.path.dirname(file_name), exist_ok=True)

@@ -24,7 +24,7 @@ from baseline_constants import (
     NUM_SAMPLES_KEY)
 
 
-def load_data(stat_metrics_file='stat_metrics.csv', sys_metrics_file='sys_metrics.csv'):
+def load_data(stat_metrics_file='femnist_experiment_active_budget_5_stat.csv', sys_metrics_file='femnist_experiment_active_budget_5_sys.csv'):
     """Loads the data from the given stat_metric and sys_metric files."""
     stat_metrics = pd.read_csv(stat_metrics_file) if stat_metrics_file else None
     sys_metrics = pd.read_csv(sys_metrics_file) if sys_metrics_file else None
