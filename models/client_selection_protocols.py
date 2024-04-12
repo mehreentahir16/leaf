@@ -21,6 +21,7 @@ def select_clients_randomly(my_round, possible_clients, costs, num_clients, budg
         selected_clients = np.random.choice(possible_clients, num_clients, replace=False)
     else:
         selected_clients = []
+        np.random.shuffle(possible_clients)
         total_cost = 0
         for client in possible_clients:
             client_cost = costs[str(client.id)]
@@ -44,7 +45,7 @@ def select_clients_greedy(possible_clients, costs, num_clients, budget):
     Returns:
         A list of selected Client objects.
     """
-    sorted_clients = sorted(possible_clients, key=lambda client: client.num_train_samples / costs[str(client.id)], reverse=True)
+    sorted_clients = sorted(possible_clients, key=lambda client: client.num_train_samples/costs[str(client.id)], reverse=True)
     
     if budget is None:
         return sorted_clients[:num_clients]
@@ -109,20 +110,24 @@ def select_clients_resource_based(possible_clients, hardware_scores, network_sco
     if budget is None:
         return sorted_clients[:num_clients]
     
-    selected_clients = []
-    total_cost = 0
-    for client in sorted_clients:
-        client_cost = costs[str(client.id)]
-        if total_cost + client_cost <= budget:
-            selected_clients.append(client)
-            total_cost += client_cost
-        else: 
-            continue
+    else:
+        selected_clients = []
+        total_cost = 0
+        top_clients_count = int(np.ceil(len(possible_clients) * (20 / 100.0)))
+        top_clients = sorted_clients[:top_clients_count]
+        selected_indices_ = random.sample([idx for idx in top_clients], num_clients)
+        for client in selected_indices_:
+            client_cost = costs[str(client.id)]
+            if total_cost + client_cost <= budget:
+                selected_clients.append(client)
+                total_cost += client_cost
+            else: 
+                continue
     
     return selected_clients
 
 
-def client_selection_active(clients, losses, costs, alpha1=0.75, alpha2=0.01, alpha3=0.1, num_clients=20, budget=None):
+def client_selection_active(clients, losses, costs, alpha1=0.75, alpha2=0.05, alpha3=0.1, num_clients=20, budget=None):
     """
     Active client selection based on performance (loss).
 
@@ -152,9 +157,12 @@ def client_selection_active(clients, losses, costs, alpha1=0.75, alpha2=0.01, al
         selected_idxs = np.random.choice(range(len(clients)), num_select, p=probs, replace=False)
         selected_clients = [clients[idx] for idx in selected_idxs]
     else:
+        valid_indices = [i for i in range(len(clients)) if probs[i] > 0]
+        np.random.shuffle(valid_indices)
         total_cost = 0
-        for idx, client in enumerate(clients):
+        for idx in valid_indices:
             if probs[idx] > 0:  # Client was not dropped
+                client = clients[idx]
                 client_cost = costs[client.id]
                 if total_cost + client_cost <= budget:
                     selected_clients.append(client)
