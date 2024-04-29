@@ -27,7 +27,23 @@ from baseline_constants import (
 def load_data(stat_metrics_file='femnist_experiment_active_budget_5_stat.csv', sys_metrics_file='femnist_experiment_active_budget_5_sys.csv'):
     """Loads the data from the given stat_metric and sys_metric files."""
     stat_metrics = pd.read_csv(stat_metrics_file) if stat_metrics_file else None
-    sys_metrics = pd.read_csv(sys_metrics_file) if sys_metrics_file else None
+    if sys_metrics_file:
+        # Define the columns based on the data structure you have mentioned
+        sys_columns = [
+            'client_id', 'round_number', 'hierarchy', 'num_samples', 'set',
+            'bytes_read', 'bytes_written', 'local_computations'
+        ]
+        sys_metrics = pd.read_csv(sys_metrics_file, header=None, names=sys_columns)
+        sys_metrics.sort_values(by='round_number', inplace=True)
+    else:
+        sys_metrics = None
+
+    print(stat_metrics.head())
+    print(sys_metrics.head())
+    
+    print("\nColumn names in the dataframe:")
+    print("stat_metrics", stat_metrics.columns)
+    print("sys_metrics", sys_metrics.columns)
 
     if stat_metrics is not None:
         stat_metrics.sort_values(by=NUM_ROUND_KEY, inplace=True)

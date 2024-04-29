@@ -57,7 +57,7 @@ class Client:
             batch_size: Size of training batches.
             minibatch: fraction of client's data to apply minibatch sgd,
                 None to use FedAvg
-        Return:
+        Return:cle
             comp: number of FLOPs executed in training process
             num_samples: number of samples used in training
             update: set of weights

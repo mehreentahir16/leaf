@@ -31,7 +31,7 @@ def extract_details(file_path):
     return rounds_to_reach_accuracy_thresholds, time_to_reach_accuracy_thresholds_seconds, total_training_time_seconds, final_accuracy, number_of_clients, avg_number_of_samples, total_unique_training_samples
 
 # Use the path to your new file here
-file_path_new = 'results/data_femnist_selection_active_clients_20_budget_50_results_test.pkl'
+file_path_new = 'results/data_femnist_selection_random_clients_20_budget_50_results_test.pkl'
 rounds_info, time_info, total_training_time_seconds, final_accuracy, number_of_clients, avg_number_of_samples, total_unique_training_samples = extract_details(file_path_new)
 
 print("Rounds to reach accuracy levels:", rounds_info)

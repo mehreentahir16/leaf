@@ -1,7 +1,6 @@
 import random
 import numpy as np
 from copy import deepcopy
-from scipy.stats import mannwhitneyu
 
 def select_clients_randomly(my_round, possible_clients, costs, num_clients, budget):
     """Selects num_clients clients randomly from possible_clients.
@@ -127,7 +126,7 @@ def select_clients_resource_based(possible_clients, hardware_scores, network_sco
     return selected_clients
 
 
-def client_selection_active(clients, losses, costs, alpha1=0.75, alpha2=0.05, alpha3=0.1, num_clients=20, budget=None):
+def client_selection_active(clients, losses, costs, alpha1=0.65, alpha2=0.05, alpha3=0.1, num_clients=20, budget=None):
     """
     Active client selection based on performance (loss).
 
@@ -157,8 +156,7 @@ def client_selection_active(clients, losses, costs, alpha1=0.75, alpha2=0.05, al
         selected_idxs = np.random.choice(range(len(clients)), num_select, p=probs, replace=False)
         selected_clients = [clients[idx] for idx in selected_idxs]
     else:
-        valid_indices = [i for i in range(len(clients)) if probs[i] > 0]
-        np.random.shuffle(valid_indices)
+        valid_indices = np.random.choice(range(len(clients)), 20, p=probs, replace=False)
         total_cost = 0
         for idx in valid_indices:
             if probs[idx] > 0:  # Client was not dropped
@@ -223,7 +221,7 @@ def normalize_scores(scores):
     max_score = np.max(scores)
     return (scores - min_score) / (max_score - min_score)
 
-def promethee_selection(my_round, clients, hardware_scores, network_scores, data_quality_scores, weights, costs, num_clients, budget=None, top_percentage=30):
+def promethee_selection(my_round, clients, hardware_scores, network_scores, data_quality_scores, weights, costs, num_clients, budget=None, top_percentage=50):
 
     np.random.seed(my_round)
 
@@ -290,6 +288,7 @@ def promethee_selection(my_round, clients, hardware_scores, network_scores, data
     else:
         selected_indices = []
         total_cost = 0
+        # selected_indices_ = np.random.shuffle(selected_indices_)
         for idx in selected_indices_:
             client_cost = costs[str(clients[idx].id)]
             if total_cost + client_cost <= budget:

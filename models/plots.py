@@ -25,20 +25,20 @@ def load_data(file_path):
 
 # Define the directories for the runs
 run_dirs = [
-    "results/femnist/budget-20/",
+    "results/femnist/budget-50/"
     # "results/celeba/run-2/",
     # "results/femnist/run-3/"  # Add paths to all your run directories
 ]
 
 # List of file names
 file_names = [
-    "data_femnist_selection_random_clients_20_budget_20_results.pkl",
-    "data_femnist_selection_active_clients_20_budget_20_results.pkl",
-    "data_femnist_selection_pow-d_clients_20_budget_20_results.pkl",
-    "updated/data_femnist_selection_greedy_clients_20_budget_20_batch_10_results_update.pkl",
-    "updated/data_femnist_selection_resource_based_clients_20_budget_20_batch_10_results_update.pkl",
-    "updated/data_femnist_selection_price_based_clients_20_budget_20_batch_10_results_update.pkl",
-    "updated/data_femnist_selection_promethee_clients_20_budget_20_results.pkl"
+    "data_femnist_selection_random_clients_20_budget_50_results.pkl",
+    "../../data_femnist_selection_active_clients_20_budget_50_results_test.pkl",
+    "data_femnist_selection_pow-d_clients_20_budget_50_results.pkl",
+    "../../data_femnist_selection_greedy_clients_20_budget_50_results_test.pkl",
+    "data_femnist_selection_resource_based_clients_20_budget_50_results.pkl",
+    "data_femnist_selection_price_based_clients_20_budget_50_results.pkl",
+    "../../data_femnist_selection_promethee_clients_20_budget_50_results_test.pkl"
 ]
 
 # # Load accuracy data for each method, multiply by 100 to convert to percentage, and prepend a 0 for the 0th round
@@ -90,5 +90,5 @@ plt.ylim(0,)
 # plt.legend()
 plt.grid(True)
 plt.tight_layout()
-plt.savefig("results/plots/femnist-budget-20.png")
+plt.savefig("results/plots/femnist-budget-50-new.png")
 plt.show()
