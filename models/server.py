@@ -138,9 +138,6 @@ class Server:
         max_cost = max(raw_costs.values())
         costs = {c_id: (cost / max_cost) * 10 for c_id, cost in raw_costs.items()}  # Scale to 0-100
 
-        # for c in clients:
-        #     data_quality_scores[c.id] = calculate_data_quality_score(data_size=num_samples[c.id], cost=costs[c.id])
-
         # Return all gathered information, including new scores
         return ids, groups, num_samples, hardware_scores, network_scores, data_quality_scores, costs, losses
 

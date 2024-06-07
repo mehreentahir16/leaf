@@ -2,8 +2,6 @@
 
 from abc import ABC, abstractmethod
 import numpy as np
-import os
-import time
 import tensorflow as tf
 
 from baseline_constants import ACCURACY_KEY
