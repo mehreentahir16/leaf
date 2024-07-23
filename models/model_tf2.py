@@ -19,39 +19,39 @@ class Model(ABC):
 
         self.graph = tf.Graph()
         with self.graph.as_default():
-            tf.set_random_seed(123 + self.seed)
+            tf.compat.v1.set_random_seed(123 + self.seed)
             self.features, self.labels, self.train_op, self.eval_metric_ops, self.loss, self.gradients = self.create_model()
-            self.saver = tf.train.Saver()
-        self.sess = tf.Session(graph=self.graph)
+            self.saver = tf.compat.v1.train.Saver()
+        self.sess = tf.compat.v1.Session(graph=self.graph)
 
         self.size = graph_size(self.graph)
 
         with self.graph.as_default():
-            self.sess.run(tf.global_variables_initializer())
+            self.sess.run(tf.compat.v1.global_variables_initializer())
 
-            metadata = tf.RunMetadata()
-            opts = tf.profiler.ProfileOptionBuilder.float_operation()
-            self.flops = tf.profiler.profile(self.graph, run_meta=metadata, cmd='scope', options=opts).total_float_ops
+            metadata = tf.compat.v1.RunMetadata()
+            opts = tf.compat.v1.profiler.ProfileOptionBuilder.float_operation()
+            self.flops = tf.compat.v1.profiler.profile(self.graph, run_meta=metadata, cmd='scope', options=opts).total_float_ops
 
         np.random.seed(self.seed)
         self.stored_gradients = None
 
     def set_params(self, model_params):
         with self.graph.as_default():
-            all_vars = tf.trainable_variables()
+            all_vars = tf.compat.v1.trainable_variables()
             for variable, value in zip(all_vars, model_params):
                 variable.load(value, self.sess)
 
     def get_params(self):
         with self.graph.as_default():
-            model_params = self.sess.run(tf.trainable_variables())
+            model_params = self.sess.run(tf.compat.v1.trainable_variables())
         return model_params
 
     @property
     def optimizer(self):
         """Optimizer to be used by the model."""
         if self._optimizer is None:
-            self._optimizer = tf.train.GradientDescentOptimizer(learning_rate=self.lr)
+            self._optimizer = tf.compat.v1.train.GradientDescentOptimizer(learning_rate=self.lr)
 
         return self._optimizer
 
@@ -160,13 +160,13 @@ class ServerModel:
         """
         var_vals = {}
         with self.model.graph.as_default():
-            all_vars = tf.trainable_variables()
+            all_vars = tf.compat.v1.trainable_variables()
             for v in all_vars:
                 val = self.model.sess.run(v)
                 var_vals[v.name] = val
         for c in clients:
             with c.model.graph.as_default():
-                all_vars = tf.trainable_variables()
+                all_vars = tf.compat.v1.trainable_variables()
                 for v in all_vars:
                     v.load(var_vals[v.name], c.model.sess)
 

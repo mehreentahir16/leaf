@@ -1,0 +1,56 @@
+TensorFlow 2.0 Upgrade Script
+-----------------------------
+Converted 1 files
+Detected 8 issues that require attention
+--------------------------------------------------------------------------------
+--------------------------------------------------------------------------------
+File: stacked_lstm.py
+--------------------------------------------------------------------------------
+stacked_lstm.py:45:24: WARNING: tf.get_variable requires manual check. tf.get_variable returns ResourceVariables by default in 2.0, which have well-defined semantics and are stricter about shapes. You can disable this behavior by passing use_resource=False, or by calling tf.compat.v1.disable_resource_variables().
+stacked_lstm.py:47:21: WARNING: tf.nn.embedding_lookup requires manual check. `partition_strategy` has been removed from tf.nn.embedding_lookup.  The 'div' strategy will be used by default.
+stacked_lstm.py:54:28: WARNING: tf.get_variable requires manual check. tf.get_variable returns ResourceVariables by default in 2.0, which have well-defined semantics and are stricter about shapes. You can disable this behavior by passing use_resource=False, or by calling tf.compat.v1.disable_resource_variables().
+stacked_lstm.py:56:28: WARNING: tf.get_variable requires manual check. tf.get_variable returns ResourceVariables by default in 2.0, which have well-defined semantics and are stricter about shapes. You can disable this behavior by passing use_resource=False, or by calling tf.compat.v1.disable_resource_variables().
+stacked_lstm.py:79:19: WARNING: Using member tf.contrib.seq2seq.sequence_loss in deprecated module tf.contrib.seq2seq. (Manual edit required) tf.contrib.seq2seq.* have been migrated to `tfa.seq2seq.*` in TensorFlow Addons. Please see https://github.com/tensorflow/addons for more info.
+stacked_lstm.py:79:19: ERROR: Using member tf.contrib.seq2seq.sequence_loss in deprecated module tf.contrib. tf.contrib.seq2seq.sequence_loss cannot be converted automatically. tf.contrib will not be distributed with TensorFlow 2.0, please consider an alternative in non-contrib TensorFlow, a community-maintained repository such as tensorflow/addons, or fork the required code.
+stacked_lstm.py:103:19: WARNING: Using member tf.contrib.rnn.LSTMBlockCell in deprecated module tf.contrib.rnn. (Manual edit required) tf.contrib.rnn.* has been deprecated, and widely used cells/functions will be moved to tensorflow/addons repository. Please check it there and file Github issues if necessary.
+stacked_lstm.py:103:19: ERROR: Using member tf.contrib.rnn.LSTMBlockCell in deprecated module tf.contrib. tf.contrib.rnn.LSTMBlockCell cannot be converted automatically. tf.contrib will not be distributed with TensorFlow 2.0, please consider an alternative in non-contrib TensorFlow, a community-maintained repository such as tensorflow/addons, or fork the required code.
+================================================================================
+Detailed log follows:
+
+================================================================================
+--------------------------------------------------------------------------------
+Processing file 'stacked_lstm.py'
+ outputting to 'stacked_lstm_tf2.py'
+--------------------------------------------------------------------------------
+
+30:27: INFO: tf.random_uniform_initializer requires manual check. Initializers no longer have the dtype argument in the constructor or partition_info argument in the __call__ method.
+The calls have been converted to compat.v1 for safety (even though they may already have been correct).
+30:27: INFO: Renamed 'tf.random_uniform_initializer' to 'tf.compat.v1.random_uniform_initializer'
+36:13: INFO: Renamed 'tf.variable_scope' to 'tf.compat.v1.variable_scope'
+37:23: INFO: Renamed 'tf.placeholder' to 'tf.compat.v1.placeholder'
+38:21: INFO: Renamed 'tf.placeholder' to 'tf.compat.v1.placeholder'
+39:38: INFO: Renamed 'tf.placeholder' to 'tf.compat.v1.placeholder'
+40:36: INFO: Renamed 'tf.placeholder' to 'tf.compat.v1.placeholder'
+45:24: WARNING: tf.get_variable requires manual check. tf.get_variable returns ResourceVariables by default in 2.0, which have well-defined semantics and are stricter about shapes. You can disable this behavior by passing use_resource=False, or by calling tf.compat.v1.disable_resource_variables().
+45:24: INFO: Renamed 'tf.get_variable' to 'tf.compat.v1.get_variable'
+47:21: WARNING: tf.nn.embedding_lookup requires manual check. `partition_strategy` has been removed from tf.nn.embedding_lookup.  The 'div' strategy will be used by default.
+53:17: INFO: Renamed 'tf.variable_scope' to 'tf.compat.v1.variable_scope'
+54:28: WARNING: tf.get_variable requires manual check. tf.get_variable returns ResourceVariables by default in 2.0, which have well-defined semantics and are stricter about shapes. You can disable this behavior by passing use_resource=False, or by calling tf.compat.v1.disable_resource_variables().
+54:28: INFO: Renamed 'tf.get_variable' to 'tf.compat.v1.get_variable'
+56:28: WARNING: tf.get_variable requires manual check. tf.get_variable returns ResourceVariables by default in 2.0, which have well-defined semantics and are stricter about shapes. You can disable this behavior by passing use_resource=False, or by calling tf.compat.v1.disable_resource_variables().
+56:28: INFO: Renamed 'tf.get_variable' to 'tf.compat.v1.get_variable'
+58:21: INFO: Renamed 'tf.nn.xw_plus_b' to 'tf.compat.v1.nn.xw_plus_b'
+79:19: WARNING: Using member tf.contrib.seq2seq.sequence_loss in deprecated module tf.contrib.seq2seq. (Manual edit required) tf.contrib.seq2seq.* have been migrated to `tfa.seq2seq.*` in TensorFlow Addons. Please see https://github.com/tensorflow/addons for more info.
+79:19: ERROR: Using member tf.contrib.seq2seq.sequence_loss in deprecated module tf.contrib. tf.contrib.seq2seq.sequence_loss cannot be converted automatically. tf.contrib will not be distributed with TensorFlow 2.0, please consider an alternative in non-contrib TensorFlow, a community-maintained repository such as tensorflow/addons, or fork the required code.
+91:20: INFO: Renamed 'tf.trainable_variables' to 'tf.compat.v1.trainable_variables'
+95:28: INFO: Renamed 'tf.train.get_or_create_global_step' to 'tf.compat.v1.train.get_or_create_global_step'
+97:30: INFO: Renamed 'tf.count_nonzero' to 'tf.math.count_nonzero'
+97:63: INFO: Renamed 'tf.count_nonzero' to 'tf.math.count_nonzero'
+97:95: INFO: Renamed 'tf.count_nonzero' to 'tf.math.count_nonzero'
+103:19: WARNING: Using member tf.contrib.rnn.LSTMBlockCell in deprecated module tf.contrib.rnn. (Manual edit required) tf.contrib.rnn.* has been deprecated, and widely used cells/functions will be moved to tensorflow/addons repository. Please check it there and file Github issues if necessary.
+103:19: ERROR: Using member tf.contrib.rnn.LSTMBlockCell in deprecated module tf.contrib. tf.contrib.rnn.LSTMBlockCell cannot be converted automatically. tf.contrib will not be distributed with TensorFlow 2.0, please consider an alternative in non-contrib TensorFlow, a community-maintained repository such as tensorflow/addons, or fork the required code.
+105:23: INFO: Renamed 'tf.nn.rnn_cell.DropoutWrapper' to 'tf.compat.v1.nn.rnn_cell.DropoutWrapper'
+108:15: INFO: Renamed 'tf.nn.rnn_cell.MultiRNNCell' to 'tf.compat.v1.nn.rnn_cell.MultiRNNCell'
+112:25: INFO: Renamed 'tf.nn.dynamic_rnn' to 'tf.compat.v1.nn.dynamic_rnn'
+--------------------------------------------------------------------------------
+

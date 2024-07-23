@@ -1,5 +1,6 @@
 import threading
 import numpy as np
+
 from baseline_constants import BYTES_WRITTEN_KEY, BYTES_READ_KEY, LOCAL_COMPUTATIONS_KEY
 from utils.client_resource_utils import calculate_hardware_score, calculate_network_score, calculate_data_quality_score
 
@@ -15,6 +16,8 @@ class Server:
         if clients is None:
             clients = self.selected_clients
 
+        print("number of clients server is calling train on...", len(clients))
+
         sys_metrics = {c.id: {BYTES_WRITTEN_KEY: 0, BYTES_READ_KEY: 0, LOCAL_COMPUTATIONS_KEY: 0} for c in clients}
         
         # Lists to hold times for each client
@@ -23,13 +26,14 @@ class Server:
         upload_times = []
 
         def train_client(c):
+            self.updates = []
             c.model.set_params(self.model)
-            comp, num_samples, update, d_time, t_time, u_time = c.train(num_epochs, batch_size, minibatch, simulate_delays)
+            comp, num_samples, update, mean, variance, d_time, t_time, u_time = c.train(num_epochs, batch_size, minibatch, simulate_delays)
             with threading.Lock():
                 sys_metrics[c.id][BYTES_READ_KEY] += c.model.size
                 sys_metrics[c.id][BYTES_WRITTEN_KEY] += c.model.size
                 sys_metrics[c.id][LOCAL_COMPUTATIONS_KEY] = comp
-                self.updates.append((num_samples, update))
+                self.updates.append((num_samples, update, mean, variance))
                 # Store times for each client
                 download_times.append(d_time)
                 training_times.append(t_time)
@@ -48,16 +52,105 @@ class Server:
 
         return sys_metrics, total_download_time, total_training_time, total_upload_time
 
-    def update_model(self):
+    def update_model(self, method='poe'):
+        if method == 'fedavg':
+            self.aggregate_updates_fedavg()
+        elif method == 'weighted_sum':
+            self.aggregate_updates_weighted_sum()
+        elif method == 'poe':
+            self.aggregate_updates_poe()
+
+    def aggregate_updates_fedavg(self):
         total_weight = 0.
         base = [0] * len(self.updates[0][1])
-        for (client_samples, client_model) in self.updates:
+        for (client_samples, client_model, _, _) in self.updates:
             total_weight += client_samples
             for i, v in enumerate(client_model):
                 base[i] += (client_samples * v.astype(np.float64))
         averaged_soln = [v / total_weight for v in base]
 
         self.model = averaged_soln
+        self.updates = []
+
+    def aggregate_updates_weighted_sum(self):
+        if not self.updates:
+            raise ValueError("No updates available for aggregation")
+        
+        total_weight = 0.
+        base_mean = None
+        base_variance = None
+
+
+        for update in self.updates:
+            client_samples, _, mean, variance = update
+            if mean is None or variance is None:
+                raise ValueError("Encountered update from a client with None values")
+
+            if base_mean is None:
+                base_mean = [0] * len(mean)
+                base_variance = [0] * len(variance)
+
+            total_weight += client_samples
+            for i, (m, v) in enumerate(zip(mean, variance)):
+                base_mean[i] += client_samples * m
+                base_variance[i] += client_samples * (v + m**2)
+
+        if total_weight == 0:
+            raise ValueError("No valid updates to aggregate")
+
+        averaged_mean = [bm / total_weight for bm in base_mean]
+        averaged_variance = [(bv / total_weight) - (am**2) for bv, am in zip(base_variance, averaged_mean)]
+
+        self.model = averaged_mean
+        self.updates = []
+
+    def aggregate_updates_poe(self):
+        if not self.updates:
+            raise ValueError("No updates available for aggregation")
+        
+        print("length of updates in poe", len(self.updates))
+        print("updates shape", np.shape(self.updates))
+        log_posterior_sum = None
+        for update in self.updates:
+            client_samples, _, mean, variance = update
+            print("mean length in poe", len(mean))
+            print("variance length in poe", len(variance))
+            if mean is None or variance is None:
+                raise ValueError("Encountered update from a client with None values")
+
+            # Ensure variance is a numpy array and handle element-wise operations properly
+            mean = np.array(mean)
+            variance = np.array(variance).flatten()
+            print(f"Client samples: {client_samples}, Mean shape: {np.shape(mean)}, Variance shape: {np.shape(variance)}")
+
+            # Ensure variance is positive
+            # if (variance <= 0).any():
+            #     variance = np.where(variance <= 0, 1e-10, variance)
+            # print(f"Adjusted Variance shape: {np.shape(variance)}, Values: {variance}")
+
+            # Generate samples
+            try:
+                sqrt_variance = np.sqrt(variance)
+                print(f"sqrt_variance shape: {sqrt_variance.shape}, Values: {sqrt_variance}")
+                samples = np.random.normal(loc=mean, scale=sqrt_variance.reshape(-1, 1), size=(len(mean), client_samples))
+            except Exception as e:
+                print(f"Exception during sample generation: {e}")
+                continue
+            print(f"Posterior samples shape: {samples.shape}")
+
+            # Compute log posterior
+            log_posterior = np.sum(np.log(samples + 1e-10), axis=0)  # Adding epsilon to prevent log(0)
+            if log_posterior_sum is None:
+                log_posterior_sum = log_posterior
+            else:
+                log_posterior_sum += log_posterior
+
+        if log_posterior_sum is None:
+            raise ValueError("No valid updates to aggregate")
+
+        normalized_posterior = np.exp(log_posterior_sum - np.max(log_posterior_sum))
+        normalized_posterior /= np.sum(normalized_posterior)
+        self.model = normalized_posterior.tolist()
         self.updates = []
 
     def test_model(self, clients_to_test, set_to_use='test'):

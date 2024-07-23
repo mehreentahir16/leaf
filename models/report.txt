@@ -1,0 +1,20 @@
+TensorFlow 2.0 Upgrade Script
+-----------------------------
+Converted 1 files
+Detected 0 issues that require attention
+--------------------------------------------------------------------------------
+================================================================================
+Detailed log follows:
+
+================================================================================
+--------------------------------------------------------------------------------
+Processing file 'main.py'
+ outputting to 'main_tf2.py'
+--------------------------------------------------------------------------------
+
+75:4: INFO: Renamed 'tf.set_random_seed' to 'tf.compat.v1.set_random_seed'
+92:4: INFO: Renamed 'tf.logging.set_verbosity' to 'tf.compat.v1.logging.set_verbosity'
+92:29: INFO: Renamed 'tf.logging.WARN' to 'tf.compat.v1.logging.WARN'
+102:4: INFO: Renamed 'tf.reset_default_graph' to 'tf.compat.v1.reset_default_graph'
+--------------------------------------------------------------------------------
+

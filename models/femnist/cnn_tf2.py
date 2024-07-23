@@ -20,9 +20,9 @@ class ClientModel(Model):
 
     def create_model(self):
         """Model function for CNN."""
-        features = tf.placeholder(
+        features = tf.compat.v1.placeholder(
             tf.float32, shape=[None, IMAGE_SIZE * IMAGE_SIZE], name='features')
-        labels = tf.placeholder(tf.int64, shape=[None], name='labels')
+        labels = tf.compat.v1.placeholder(tf.int64, shape=[None], name='labels')
         input_layer = tf.reshape(features, [-1, IMAGE_SIZE, IMAGE_SIZE, 1])
         conv1 = tf.layers.conv2d(
             inputs=input_layer,
@@ -45,12 +45,12 @@ class ClientModel(Model):
             "classes": tf.argmax(input=logits, axis=1),
             "probabilities": tf.nn.softmax(logits, name="softmax_tensor")
         }
-        loss = tf.losses.sparse_softmax_cross_entropy(labels=labels, logits=logits)
+        loss = tf.compat.v1.losses.sparse_softmax_cross_entropy(labels=labels, logits=logits)
         train_op = self.optimizer.minimize(
             loss=loss,
-            global_step=tf.train.get_global_step())
-        eval_metric_ops = tf.count_nonzero(tf.equal(labels, predictions["classes"]))
-        gradients = tf.gradients(loss, tf.trainable_variables())
+            global_step=tf.compat.v1.train.get_global_step())
+        eval_metric_ops = tf.math.count_nonzero(tf.equal(labels, predictions["classes"]))
+        gradients = tf.gradients(loss, tf.compat.v1.trainable_variables())
         return features, labels, train_op, eval_metric_ops, loss, gradients
 
     def process_x(self, raw_x_batch):
