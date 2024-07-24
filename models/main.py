@@ -1,9 +1,12 @@
 """Script to run the baselines."""
-import time
+import os
+os.environ['TF_ENABLE_ONEDNN_OPTS'] = '0'
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
+os.environ['CUDA_VISIBLE_DEVICES'] = ''  # Use CPU only
+
 import importlib
 import numpy as np
-import os
-import sys
+
 import random
 import pickle
 import tensorflow as tf
@@ -72,7 +75,7 @@ def main():
     # Set the random seed if provided (affects client sampling, and batching)
     random.seed(1 + args.seed)
     np.random.seed(12 + args.seed)
-    tf.set_random_seed(123 + args.seed)
+    tf.compat.v1.set_random_seed(123 + args.seed)
 
     model_path = '%s/%s.py' % (args.dataset, args.model)
     if not os.path.exists(model_path):
@@ -89,7 +92,7 @@ def main():
     clients_per_round = args.clients_per_round if args.clients_per_round != -1 else tup[2]
 
     # Suppress tf warnings
-    tf.logging.set_verbosity(tf.logging.WARN)
+    tf.compat.v1.logging.set_verbosity(tf.compat.v1.logging.WARN)
 
     # Create 2 models
     model_params = MODEL_PARAMS[model_path]
@@ -99,7 +102,7 @@ def main():
         model_params = tuple(model_params_list)
 
     # Create client model, and share params with server model
-    tf.reset_default_graph()
+    tf.compat.v1.reset_default_graph()
     client_model = ClientModel(args.seed, *model_params)
 
     # Create server
@@ -138,9 +141,9 @@ def main():
         c_ids, c_groups, c_num_samples, c_hardware_scores, c_network_scores, c_data_quality_scores, c_costs, c_losses = server.get_clients_info(server.selected_clients)
 
         print("===========Client info=============")
-        # print("selected client IDs", c_ids)
-        # print("c_num_samples", c_num_samples)
-        # print("c_losses", c_losses)
+        print("selected client IDs", c_ids)
+        print("c_num_samples", c_num_samples)
+        print("c_losses", c_losses)
 
         no_selected_clients = (len(server.selected_clients))
         print("no_selected_clients", no_selected_clients)
@@ -180,8 +183,8 @@ def main():
     ckpt_path = os.path.join('checkpoints', args.dataset)
     if not os.path.exists(ckpt_path):
         os.makedirs(ckpt_path)
-    save_path = server.save_model(os.path.join(ckpt_path, '{}.ckpt'.format(args.model)))
-    print('Model saved in path: %s' % save_path)
+    save_path = server.save_model(os.path.join(ckpt_path, '{}.weights.h5'.format(args.model)))
+    print('Model weights saved in path: %s' % save_path)
 
     # Saving results including training_time for each round
     results = {
@@ -204,8 +207,6 @@ def main():
 
     print(f'Results saved to {file_name}')
 
-    # Close models
-    server.close_model()
 
 def create_clients(users, groups, train_data, test_data, model):
     if len(groups) == 0:

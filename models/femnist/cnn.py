@@ -4,10 +4,12 @@ import os
 os.environ['KMP_AFFINITY'] = 'none'
 os.environ['OMP_NUM_THREADS'] = '1'
 
+import numpy as np
 import tensorflow as tf
+import tensorflow_probability as tfp
+tfd = tfp.distributions
 
 from model import Model
-import numpy as np
 
 
 IMAGE_SIZE = 28
@@ -19,70 +21,84 @@ class ClientModel(Model):
         super(ClientModel, self).__init__(seed, lr)
 
     def create_model(self):
-        """Model function for CNN."""
-        features = tf.placeholder(
-            tf.float32, shape=[None, IMAGE_SIZE * IMAGE_SIZE], name='features')
-        labels = tf.placeholder(tf.int64, shape=[None], name='labels')
-        input_layer = tf.reshape(features, [-1, IMAGE_SIZE, IMAGE_SIZE, 1])
-        conv1 = tf.layers.conv2d(
-            inputs=input_layer,
+        inputs = tf.keras.Input(shape=(28 * 28,), name='features')
+        input_layer = tf.keras.layers.Reshape((28, 28, 1))(inputs)
+        conv1 = tf.keras.layers.Conv2D(
             filters=32,
             kernel_size=[5, 5],
             padding="same",
-            activation=tf.nn.relu)
-        pool1 = tf.layers.max_pooling2d(inputs=conv1, pool_size=[2, 2], strides=2)
-        conv2 = tf.layers.conv2d(
-            inputs=pool1,
+            activation=tf.nn.relu)(input_layer)
+        pool1 = tf.keras.layers.MaxPooling2D(pool_size=[2, 2], strides=2)(conv1)
+        conv2 = tf.keras.layers.Conv2D(
             filters=64,
             kernel_size=[5, 5],
             padding="same",
-            activation=tf.nn.relu)
-        pool2 = tf.layers.max_pooling2d(inputs=conv2, pool_size=[2, 2], strides=2)
-        pool2_flat = tf.reshape(pool2, [-1, 7 * 7 * 64])
-        dense = tf.layers.dense(inputs=pool2_flat, units=2048, activation=tf.nn.relu)
-        logits = tf.layers.dense(inputs=dense, units=self.num_classes)
-        predictions = {
-            "classes": tf.argmax(input=logits, axis=1),
-            "probabilities": tf.nn.softmax(logits, name="softmax_tensor")
-        }
-        loss = tf.losses.sparse_softmax_cross_entropy(labels=labels, logits=logits)
-        train_op = self.optimizer.minimize(
-            loss=loss,
-            global_step=tf.train.get_global_step())
-        eval_metric_ops = tf.count_nonzero(tf.equal(labels, predictions["classes"]))
-        gradients = tf.gradients(loss, tf.trainable_variables())
-        return features, labels, train_op, eval_metric_ops, loss, gradients
+            activation=tf.nn.relu)(pool1)
+        pool2 = tf.keras.layers.MaxPooling2D(pool_size=[2, 2], strides=2)(conv2)
+        pool2_flat = tf.keras.layers.Flatten()(pool2)
+        dense = tf.keras.layers.Dense(units=2048, activation=tf.nn.relu)(pool2_flat)
+        logits = tf.keras.layers.Dense(units=self.num_classes)(dense)
+
+        return tf.keras.Model(inputs=inputs, outputs=logits)
+
+    def loss_fn(self):
+        return tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True)
+
+    def metrics(self):
+        return ['accuracy']
 
     def process_x(self, raw_x_batch):
         return np.array(raw_x_batch)
 
     def process_y(self, raw_y_batch):
         return np.array(raw_y_batch)
-    
-    def hmc_sample(self, num_samples, num_burnin_steps, step_size):
-        def leapfrog(position, momentum, step_size):
-            grads = self.stored_gradients
-            new_momentum = [m + 0.5 * step_size * g for m, g in zip(momentum, grads)]
-            new_position = [p + step_size * nm for p, nm in zip(position, new_momentum)]
-            new_momentum = [m + 0.5 * step_size * g for m, g in zip(new_momentum, grads)]
-            return new_position, new_momentum
 
-        with self.graph.as_default():
-            initial_params = self.get_params()
-            position = initial_params
-            samples = []
-            for step in range(num_burnin_steps + num_samples):
-                momentum = [np.random.randn(*p.shape) for p in position]
-                current_position = position
-                current_momentum = momentum
-                for _ in range(3):
-                    current_position, current_momentum = leapfrog(current_position, current_momentum, step_size)
-                if step >= num_burnin_steps:
-                    samples.append(current_position)
-                position = current_position
-            samples = np.array(samples)
-            mean = np.mean(samples, axis=0)
-            variance = np.var(samples, axis=0)
-            print("mean len in hmc method...", len(mean))
-            print("variance len in hmc method", len(variance))
-            return mean, variance
+    @tf.function
+    def target_log_prob_fn(self, cloned_model, *weights):
+        for variable, weight in zip(cloned_model.trainable_variables, weights):
+            variable.assign(weight)
+        log_prob = -tf.reduce_mean(
+            [tf.reduce_sum(g * w) for g, w in zip(self.stored_gradients, weights)])
+        return log_prob
+
+    @tf.function
+    def run_chain(self, initial_state, num_samples, num_burnin_steps, adaptive_kernel):
+        return tfp.mcmc.sample_chain(
+            num_results=num_samples,
+            num_burnin_steps=num_burnin_steps,
+            current_state=initial_state,
+            kernel=adaptive_kernel,
+            trace_fn=lambda _, pkr: pkr.inner_results.is_accepted
+        )
+
+    def hmc_sample(self, num_samples=10, num_burnin_steps=5, step_size=0.001):
+        # Clone the model
+        cloned_model = tf.keras.models.clone_model(self.model)
+        cloned_model.set_weights(self.model.get_weights())
+
+        initial_state = [var.numpy() for var in cloned_model.trainable_variables]
+
+        adaptive_kernel = tfp.mcmc.SimpleStepSizeAdaptation(
+            inner_kernel=tfp.mcmc.HamiltonianMonteCarlo(
+                target_log_prob_fn=lambda *args: self.target_log_prob_fn(cloned_model, *args),
+                step_size=step_size,
+                num_leapfrog_steps=3),
+            num_adaptation_steps=int(num_burnin_steps * 0.8))
+
+        samples, is_accepted = self.run_chain(
+            initial_state=initial_state,
+            num_samples=num_samples,
+            num_burnin_steps=num_burnin_steps,
+            adaptive_kernel=adaptive_kernel)
+
+        samples = [sample.numpy() for sample in samples]
+        acceptance_rate = np.mean(is_accepted.numpy())
+
+        mean = [np.mean(sample, axis=0) for sample in samples]
+        variance = [np.var(sample, axis=0) for sample in samples]
+
+         # Debugging output
+        for i, (m, v) in enumerate(zip(mean, variance)):
+            print(f"Layer {i}: mean shape: {m.shape}, variance shape: {v.shape}")
+
+        return mean, variance

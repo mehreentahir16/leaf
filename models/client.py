@@ -70,9 +70,9 @@ class Client:
         upload_time = 0
         mean = None
         variance = None
-        
+
         if simulate_delays==True: 
-            untrained_model_size = get_model_size(self.model)
+            untrained_model_size = get_model_size(self._model.model)
             download_time = estimate_network_delay(untrained_model_size, self.network_config['Bandwidth'], self.network_config['Latency'])
             # time.sleep(download_time)
 
@@ -90,7 +90,10 @@ class Client:
                 comp, update = self.model.train(data, num_epochs, num_data)
             
             training_time = estimate_training_time(comp, self.hardware_config['CPU Count']*self.hardware_config['Cores'], self.hardware_config['Frequency'], self.hardware_config['CPU Utilization'], self.hardware_config['RAM'], self.hardware_config['Available RAM'])
-            mean, variance = self.model.hmc_sample(num_samples=10, num_burnin_steps=5, step_size=0.001)
+            try:
+                mean, variance = self.model.hmc_sample(num_samples=10, num_burnin_steps=10, step_size=0.004)
+            except Exception as e:
+                print(f"something went wrong trying to calculate mean and variance: {e}")
             update_size = get_update_size(update)
             upload_time = estimate_network_delay(update_size, self.network_config['Bandwidth'], self.network_config['Latency'])
             # time.sleep(upload_time)

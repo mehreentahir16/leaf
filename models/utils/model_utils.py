@@ -91,17 +91,18 @@ def read_data(train_data_dir, test_data_dir):
 def get_model_size(model):
     """
     Estimates the size of the TensorFlow model by summing the sizes of its trainable parameters.
-    
+
     Args:
     - model: An instance of a TensorFlow model.
-    
+
     Returns:
     - The estimated size of the model in bytes.
     """
     total_size = 0
-    for variable in model.sess.run(tf.trainable_variables()):
-        # Each variable is a tf.Tensor or tf.Variable, get its size in bytes
-        total_size += variable.size * variable.itemsize
+    for variable in model.trainable_variables:
+        variable_size = tf.size(variable).numpy()  # Calculate the size of the variable
+        dtype_size = tf.dtypes.as_dtype(variable.dtype).size  # Get the size of the data type in bytes
+        total_size += variable_size * dtype_size
     return total_size
 
 def get_update_size(update):
@@ -114,5 +115,5 @@ def get_update_size(update):
     Returns:
     - total_size: The total size of the update in bytes.
     """
-    total_size = sum(array.nbytes for array in update)
+    total_size = sum(array.numpy().nbytes for array in update)
     return total_size

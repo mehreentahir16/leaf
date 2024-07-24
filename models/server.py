@@ -52,7 +52,7 @@ class Server:
 
         return sys_metrics, total_download_time, total_training_time, total_upload_time
 
-    def update_model(self, method='poe'):
+    def update_model(self, method='weighted_sum'):
         if method == 'fedavg':
             self.aggregate_updates_fedavg()
         elif method == 'weighted_sum':
@@ -61,12 +61,13 @@ class Server:
             self.aggregate_updates_poe()
 
     def aggregate_updates_fedavg(self):
+        print("inside fedavg...")
         total_weight = 0.
-        base = [0] * len(self.updates[0][1])
+        base = [np.zeros_like(v.numpy(), dtype=np.float64) for v in self.updates[0][1]]
         for (client_samples, client_model, _, _) in self.updates:
             total_weight += client_samples
             for i, v in enumerate(client_model):
-                base[i] += (client_samples * v.astype(np.float64))
+                base[i] += (client_samples * v.numpy().astype(np.float64))
         averaged_soln = [v / total_weight for v in base]
 
         self.model = averaged_soln
@@ -107,50 +108,55 @@ class Server:
     def aggregate_updates_poe(self):
         if not self.updates:
             raise ValueError("No updates available for aggregation")
-        
-        print("length of updates in poe", len(self.updates))
-        print("updates shape", np.shape(self.updates))
-        log_posterior_sum = None
-        for update in self.updates:
+
+        print("Number of updates in PoE:", len(self.updates))
+
+        means = []
+        precisions = []
+
+        for idx, update in enumerate(self.updates):
             client_samples, _, mean, variance = update
-            print("mean length in poe", len(mean))
-            print("variance length in poe", len(variance))
             if mean is None or variance is None:
-                raise ValueError("Encountered update from a client with None values")
+                raise ValueError(f"Encountered update from client {idx} with None values")
 
-            # Ensure variance is a numpy array and handle element-wise operations properly
-            mean = np.array(mean)
-            variance = np.array(variance).flatten()
-            print(f"Client samples: {client_samples}, Mean shape: {np.shape(mean)}, Variance shape: {np.shape(variance)}")
-
-            # Ensure variance is positive
-            # if (variance <= 0).any():
-            #     variance = np.where(variance <= 0, 1e-10, variance)
-            # print(f"Adjusted Variance shape: {np.shape(variance)}, Values: {variance}")
-
-            # Generate samples
             try:
-                sqrt_variance = np.sqrt(variance)
-                print(f"sqrt_variance shape: {sqrt_variance.shape}, Values: {sqrt_variance}")
-                samples = np.random.normal(loc=mean, scale=sqrt_variance.reshape(-1, 1), size=(len(mean), client_samples))
+                mean = [np.ravel(m) for m in mean]
+                variance = [np.ravel(v) for v in variance]
+
+                mean = np.concatenate(mean)
+                variance = np.concatenate(variance)
+
+                variance = np.where(variance <= 0, 1e-10, variance)
+
+                precision = 1.0 / variance
+
+                means.append(mean)
+                precisions.append(precision)
             except Exception as e:
-                print(f"Exception during sample generation: {e}")
+                print(f"Error converting mean/variance to numpy arrays for client {idx}: {e}")
                 continue
-            print(f"Posterior samples shape: {samples.shape}")
 
-            # Compute log posterior
-            log_posterior = np.sum(np.log(samples + 1e-10), axis=0)  # Adding epsilon to prevent log(0)
-            if log_posterior_sum is None:
-                log_posterior_sum = log_posterior
-            else:
-                log_posterior_sum += log_posterior
-
-        if log_posterior_sum is None:
+        if not means or not precisions:
             raise ValueError("No valid updates to aggregate")
 
-        normalized_posterior = np.exp(log_posterior_sum - np.max(log_posterior_sum))
-        normalized_posterior /= np.sum(normalized_posterior)
-        self.model = normalized_posterior.tolist()
+        precisions_sum = np.sum(precisions, axis=0)
+        weighted_means_sum = np.sum([mean * precision for mean, precision in zip(means, precisions)], axis=0)
+        aggregated_mean = weighted_means_sum / precisions_sum
+        aggregated_variance = 1.0 / precisions_sum
+
+        print("Aggregated mean shape:", aggregated_mean.shape)
+        print("Aggregated variance shape:", aggregated_variance.shape)
+
+        original_shapes = [layer.shape for layer in self.client_model.model.trainable_variables]
+
+        reshaped_mean = []
+        index = 0
+        for shape in original_shapes:
+            size = np.prod(shape)
+            reshaped_mean.append(aggregated_mean[index:index + size].reshape(shape))
+            index += size
+
+        self.model = reshaped_mean
         self.updates = []
 
     def test_model(self, clients_to_test, set_to_use='test'):
@@ -238,8 +244,6 @@ class Server:
         """Saves the server model on checkpoints/dataset/model.ckpt."""
         # Save server model
         self.client_model.set_params(self.model)
-        model_sess =  self.client_model.sess
-        return self.client_model.saver.save(model_sess, path)
+        self.client_model.model.save_weights(path)
+        return path
 
-    def close_model(self):
-        self.client_model.close()
