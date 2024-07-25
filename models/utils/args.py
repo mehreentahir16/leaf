@@ -36,11 +36,11 @@ def parse_args():
     parser.add_argument('--batch-size',
                     help='batch size when clients train on data;',
                     type=int,
-                    default=10)
+                    default=16)
     parser.add_argument('--seed',
                     help='seed for random client sampling and batch splitting',
                     type=int,
-                    default=0)
+                    default=123)
     parser.add_argument('--metrics-name', 
                     help='name for metrics file;',
                     type=str,

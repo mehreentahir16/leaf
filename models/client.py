@@ -7,9 +7,10 @@ from utils.client_resource_utils import estimate_network_delay, estimate_trainin
 class Client:
     
     def __init__(self, client_id, group=None, train_data={'x' : [],'y' : []}, eval_data={'x' : [],'y' : []}, model=None):
-        # numbers = re.findall(r'\d+', client_id)
-        # result = ''.join(numbers)
-        self.seed = np.random.seed(123)
+        numbers = re.findall(r'\d+', client_id)
+        result = ''.join(numbers)
+        result = int(result)
+        self.seed = np.random.seed(123+result)
         self._model = model
         self.id = client_id
         self.group = group
@@ -42,7 +43,7 @@ class Client:
     def assign_network(self):
         """Randomly assigns network characteristics, allowing high-end devices to have poor network and vice versa."""
         if self.seed is not None:
-            random.seed(self.seed+1)
+            random.seed(self.seed + 1)
         conditions = {
             'Poor': {'Bandwidth': random.uniform(1, 4), 'Latency': random.randint(20, 100)},
             'Average': {'Bandwidth': random.uniform(4, 10), 'Latency': random.randint(20, 80)},
@@ -91,7 +92,7 @@ class Client:
             
             training_time = estimate_training_time(comp, self.hardware_config['CPU Count']*self.hardware_config['Cores'], self.hardware_config['Frequency'], self.hardware_config['CPU Utilization'], self.hardware_config['RAM'], self.hardware_config['Available RAM'])
             try:
-                mean, variance = self.model.hmc_sample(num_samples=10, num_burnin_steps=10, step_size=0.004)
+                mean, variance = self.model.nuts_sample(num_samples=10, num_burnin_steps=5, step_size=0.001)
             except Exception as e:
                 print(f"something went wrong trying to calculate mean and variance: {e}")
             update_size = get_update_size(update)

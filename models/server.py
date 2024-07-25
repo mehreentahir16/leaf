@@ -120,14 +120,17 @@ class Server:
                 raise ValueError(f"Encountered update from client {idx} with None values")
 
             try:
+                # Normalize mean and variance
                 mean = [np.ravel(m) for m in mean]
                 variance = [np.ravel(v) for v in variance]
 
                 mean = np.concatenate(mean)
                 variance = np.concatenate(variance)
 
+                # Ensure variances are positive
                 variance = np.where(variance <= 0, 1e-10, variance)
 
+                # Calculate precision (inverse of variance)
                 precision = 1.0 / variance
 
                 means.append(mean)
@@ -139,16 +142,23 @@ class Server:
         if not means or not precisions:
             raise ValueError("No valid updates to aggregate")
 
+        # Aggregate means and variances using PoE
         precisions_sum = np.sum(precisions, axis=0)
         weighted_means_sum = np.sum([mean * precision for mean, precision in zip(means, precisions)], axis=0)
         aggregated_mean = weighted_means_sum / precisions_sum
         aggregated_variance = 1.0 / precisions_sum
 
+        # # Regularization
+        # aggregated_mean = np.clip(aggregated_mean, -1e10, 1e10)
+        # aggregated_variance = np.clip(aggregated_variance, 1e-10, 1e10)
+
         print("Aggregated mean shape:", aggregated_mean.shape)
         print("Aggregated variance shape:", aggregated_variance.shape)
 
+        # Get the original shapes of the trainable variables
         original_shapes = [layer.shape for layer in self.client_model.model.trainable_variables]
 
+        # Reshape the aggregated mean back to the original shapes
         reshaped_mean = []
         index = 0
         for shape in original_shapes:
@@ -156,8 +166,11 @@ class Server:
             reshaped_mean.append(aggregated_mean[index:index + size].reshape(shape))
             index += size
 
+        # Update the model parameters
         self.model = reshaped_mean
         self.updates = []
+
+        print("Updated model parameters with aggregated mean.")
 
     def test_model(self, clients_to_test, set_to_use='test'):
         """Tests self.model on given clients.
