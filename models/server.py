@@ -1,6 +1,15 @@
+import ot
 import threading
 import numpy as np
+import tensorflow as tf
 import concurrent.futures
+
+from multiprocessing import Pool, cpu_count
+
+import logging
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
 
 from baseline_constants import BYTES_WRITTEN_KEY, BYTES_READ_KEY, LOCAL_COMPUTATIONS_KEY
 from utils.client_resource_utils import calculate_hardware_score, calculate_network_score, calculate_data_quality_score
@@ -29,12 +38,12 @@ class Server:
         def train_client(c):
             self.updates = []
             c.model.set_params(self.model)
-            comp, num_samples, update, mean, variance, d_time, t_time, u_time = c.train(num_epochs, batch_size, minibatch, simulate_delays)
+            comp, num_samples, update,  d_time, t_time, u_time = c.train(num_epochs, batch_size, minibatch, simulate_delays)
             with threading.Lock():
                 sys_metrics[c.id][BYTES_READ_KEY] += c.model.size
                 sys_metrics[c.id][BYTES_WRITTEN_KEY] += c.model.size
                 sys_metrics[c.id][LOCAL_COMPUTATIONS_KEY] = comp
-                self.updates.append((num_samples, update, mean, variance))
+                self.updates.append((num_samples, update))
                 # Store times for each client
                 download_times.append(d_time)
                 training_times.append(t_time)
@@ -53,19 +62,17 @@ class Server:
 
         return sys_metrics, total_download_time, total_training_time, total_upload_time
 
-    def update_model(self, method='weighted_sum'):
+    def update_model(self, method='emd'):
         if method == 'fedavg':
             self.aggregate_updates_fedavg()
-        elif method == 'weighted_sum':
-            self.aggregate_updates_weighted_sum()
-        elif method == 'poe':
-            self.aggregate_updates_poe()
+        elif method == 'emd':
+            self.aggregate_updates_wasserstein_barycenter()
 
     def aggregate_updates_fedavg(self):
         print("inside fedavg...")
         total_weight = 0.
         base = [np.zeros_like(v.numpy(), dtype=np.float64) for v in self.updates[0][1]]
-        for (client_samples, client_model, _, _) in self.updates:
+        for (client_samples, client_model) in self.updates:
             total_weight += client_samples
             for i, v in enumerate(client_model):
                 base[i] += (client_samples * v.numpy().astype(np.float64))
@@ -74,104 +81,24 @@ class Server:
         self.model = averaged_soln
         self.updates = []
 
-    def aggregate_updates_weighted_sum(self):
-        if not self.updates:
-            raise ValueError("No updates available for aggregation")
+    def aggregate_updates_wasserstein_barycenter(self):
+        print("inside wasserstein_barycenter...")
+        client_models = [update[1] for update in self.updates]
+        weights = np.array([update[0] for update in self.updates])
+        weights = weights / weights.sum()  # Normalize weights
+
+        print(f"client_models type: {type(client_models)}")
+        print(f"client_models[0] type: {type(client_models[0])}")
+        print(f"client_models[0][0] type: {type(client_models[0][0])}")
+        print(f"client_models[0][0] shape: {client_models[0][0].shape}")
+
+        # Compute the Wasserstein barycenter
+        barycenter_model = compute_wasserstein_barycenter(client_models, weights)
+
+        # Set the aggregated model parameters
+        self.client_model.set_params(barycenter_model)
+        self.updates = []
         
-        total_weight = 0.
-        base_mean = None
-        base_variance = None
-
-
-        for update in self.updates:
-            client_samples, _, mean, variance = update
-            if mean is None or variance is None:
-                raise ValueError("Encountered update from a client with None values")
-
-            if base_mean is None:
-                base_mean = [0] * len(mean)
-                base_variance = [0] * len(variance)
-
-            total_weight += client_samples
-            for i, (m, v) in enumerate(zip(mean, variance)):
-                base_mean[i] += client_samples * m
-                base_variance[i] += client_samples * (v + m**2)
-
-        if total_weight == 0:
-            raise ValueError("No valid updates to aggregate")
-
-        averaged_mean = [bm / total_weight for bm in base_mean]
-        averaged_variance = [(bv / total_weight) - (am**2) for bv, am in zip(base_variance, averaged_mean)]
-
-        self.model = averaged_mean
-        self.updates = []
-
-    def aggregate_updates_poe(self):
-        if not self.updates:
-            raise ValueError("No updates available for aggregation")
-
-        print("Number of updates in PoE:", len(self.updates))
-
-        means = []
-        precisions = []
-
-        for idx, update in enumerate(self.updates):
-            client_samples, _, mean, variance = update
-            if mean is None or variance is None:
-                raise ValueError(f"Encountered update from client {idx} with None values")
-
-            try:
-                # Normalize mean and variance
-                mean = [np.ravel(m) for m in mean]
-                variance = [np.ravel(v) for v in variance]
-
-                mean = np.concatenate(mean)
-                variance = np.concatenate(variance)
-
-                # Ensure variances are positive
-                variance = np.where(variance <= 0, 1e-10, variance)
-
-                # Calculate precision (inverse of variance)
-                precision = 1.0 / variance
-
-                means.append(mean)
-                precisions.append(precision)
-            except Exception as e:
-                print(f"Error converting mean/variance to numpy arrays for client {idx}: {e}")
-                continue
-
-        if not means or not precisions:
-            raise ValueError("No valid updates to aggregate")
-
-        # Aggregate means and variances using PoE
-        precisions_sum = np.sum(precisions, axis=0)
-        weighted_means_sum = np.sum([mean * precision for mean, precision in zip(means, precisions)], axis=0)
-        aggregated_mean = weighted_means_sum / precisions_sum
-        aggregated_variance = 1.0 / precisions_sum
-
-        # # Regularization
-        # aggregated_mean = np.clip(aggregated_mean, -1e10, 1e10)
-        # aggregated_variance = np.clip(aggregated_variance, 1e-10, 1e10)
-
-        print("Aggregated mean shape:", aggregated_mean.shape)
-        print("Aggregated variance shape:", aggregated_variance.shape)
-
-        # Get the original shapes of the trainable variables
-        original_shapes = [layer.shape for layer in self.client_model.model.trainable_variables]
-
-        # Reshape the aggregated mean back to the original shapes
-        reshaped_mean = []
-        index = 0
-        for shape in original_shapes:
-            size = np.prod(shape)
-            reshaped_mean.append(aggregated_mean[index:index + size].reshape(shape))
-            index += size
-
-        # Update the model parameters
-        self.model = reshaped_mean
-        self.updates = []
-
-        print("Updated model parameters with aggregated mean.")
 
     def test_model(self, clients_to_test, set_to_use='test'):
         """Tests self.model on given clients.
@@ -261,3 +188,55 @@ class Server:
         self.client_model.model.save_weights(path)
         return path
 
+def compute_wasserstein_barycenter(client_models, weights, reg=1.0, numItermax=10):
+    """
+    Compute the Wasserstein Barycenter of client model parameters.
+    
+    Args:
+        client_models: List of client model parameter arrays.
+        weights: List of weights for each client model.
+        reg: Regularization parameter for Sinkhorn distance.
+        numItermax: Maximum number of iterations for the Sinkhorn algorithm.
+    
+    Returns:
+        barycenter_model: Aggregated model parameters as the Wasserstein Barycenter.
+    """
+    barycenter_model = []
+
+    for i in range(len(client_models[0])):
+        # Flatten the parameters for each client model
+        param_matrix = np.array([client_model[i].numpy().flatten() for client_model in client_models])
+
+        # Debugging output
+        print(f"param_matrix shape: {param_matrix.shape}")
+
+        # Ensure param_matrix has the correct shape and is non-empty
+        if param_matrix.ndim != 2 or param_matrix.shape[0] == 0 or param_matrix.shape[1] == 0:
+            raise ValueError(f"Invalid param_matrix shape: {param_matrix.shape}")
+
+        # Compute the cost matrix
+        M = ot.dist(param_matrix.T, param_matrix.T, metric='euclidean')
+
+        # Debugging output for cost matrix
+        print(f"Cost matrix M shape: {M.shape}")
+
+        # Normalize the weights
+        normalized_weights = weights / weights.sum()
+
+        # Debugging output for weights
+        print(f"Normalized weights shape: {normalized_weights.shape}")
+
+        # Transpose param_matrix to match the expected shape for A (dim, n_hists)
+        param_matrix_T = param_matrix.T  # **Changed Line**
+        print(f"param_matrix_T shape: {param_matrix_T.shape}")  # **Debugging output for param_matrix_T**
+
+        # Compute the Wasserstein barycenter for the i-th parameter
+        barycenter_i = ot.bregman.barycenter(param_matrix_T, M, reg=reg, weights=normalized_weights, numItermax=numItermax)  # **Changed Line**
+
+        # Debugging output for barycenter_i
+        print(f"Barycenter shape: {barycenter_i.shape}")
+
+        # Reshape the barycenter back to its original shape and convert to TensorFlow tensor
+        barycenter_model.append(tf.convert_to_tensor(barycenter_i.T.reshape(client_models[0][i].shape), dtype=tf.float32))
+
+    return barycenter_model

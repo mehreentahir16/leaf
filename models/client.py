@@ -69,8 +69,6 @@ class Client:
         download_time = 0
         training_time = 0
         upload_time = 0
-        mean = None
-        variance = None
 
         if simulate_delays==True: 
             untrained_model_size = get_model_size(self._model.model)
@@ -91,10 +89,6 @@ class Client:
                 comp, update = self.model.train(data, num_epochs, num_data)
             
             training_time = estimate_training_time(comp, self.hardware_config['CPU Count']*self.hardware_config['Cores'], self.hardware_config['Frequency'], self.hardware_config['CPU Utilization'], self.hardware_config['RAM'], self.hardware_config['Available RAM'])
-            try:
-                mean, variance = self.model.hmc_sample(num_samples=2, num_burnin_steps=2, step_size=0.004)
-            except Exception as e:
-                print(f"something went wrong trying to calculate mean and variance: {e}")
             update_size = get_update_size(update)
             upload_time = estimate_network_delay(update_size, self.network_config['Bandwidth'], self.network_config['Latency'])
             # time.sleep(upload_time)
@@ -117,7 +111,7 @@ class Client:
             
         
         num_train_samples = len(data['y'])
-        return comp, num_train_samples, update, mean, variance, download_time, training_time, upload_time
+        return comp, num_train_samples, update, download_time, training_time, upload_time
 
     def test(self, set_to_use='test'):
         """Tests self.model on self.test_data.
