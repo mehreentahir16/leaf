@@ -53,6 +53,7 @@ class ClientModel(Model):
     def process_y(self, raw_y_batch):
         return np.array(raw_y_batch)
 
+    @tf.function
     def target_log_prob_fn(self, cloned_model, *weights):
         for variable, weight in zip(cloned_model.trainable_variables, weights):
             variable.assign(weight)
@@ -61,52 +62,45 @@ class ClientModel(Model):
         return log_prob
 
     @tf.function
-    def run_chain(self, initial_state, num_samples, num_burnin_steps, kernel):
-        with tf.device('/GPU:0'):
-            return tfp.mcmc.sample_chain(
-                num_results=num_samples,
-                num_burnin_steps=num_burnin_steps,
-                current_state=initial_state,
-                kernel=kernel,
-                trace_fn=lambda _, pkr: pkr.inner_results.is_accepted
-            )
+    def run_chain(self, initial_state, num_samples, num_burnin_steps, adaptive_kernel):
+        return tfp.mcmc.sample_chain(
+            num_results=num_samples,
+            num_burnin_steps=num_burnin_steps,
+            current_state=initial_state,
+            kernel=adaptive_kernel,
+            trace_fn=lambda _, pkr: pkr.inner_results.is_accepted
+        )
 
-    def nuts_sample(self, num_samples=10, num_burnin_steps=5, step_size=0.001):
+    def hmc_sample(self, num_samples=10, num_burnin_steps=5, step_size=0.001):
         # Clone the model
         cloned_model = tf.keras.models.clone_model(self.model)
         cloned_model.set_weights(self.model.get_weights())
 
-        initial_state = [tf.identity(var) for var in cloned_model.trainable_variables]
-
-        # Use NUTS kernel
-        nuts_kernel = tfp.mcmc.NoUTurnSampler(
-            target_log_prob_fn=lambda *args: self.target_log_prob_fn(cloned_model, *args),
-            step_size=step_size,
-            max_tree_depth=5,
-            parallel_iterations=10)
+        initial_state = [var.numpy() for var in cloned_model.trainable_variables]
 
         adaptive_kernel = tfp.mcmc.SimpleStepSizeAdaptation(
-            inner_kernel=nuts_kernel,
-            num_adaptation_steps=int(num_burnin_steps * 0.8),
-            target_accept_prob=0.75)
+            inner_kernel=tfp.mcmc.HamiltonianMonteCarlo(
+                target_log_prob_fn=lambda *args: self.target_log_prob_fn(cloned_model, *args),
+                step_size=step_size,
+                num_leapfrog_steps=3),
+            num_adaptation_steps=int(num_burnin_steps * 0.8))
 
-        samples, kernel_results = self.run_chain(
+        samples, is_accepted = self.run_chain(
             initial_state=initial_state,
             num_samples=num_samples,
             num_burnin_steps=num_burnin_steps,
-            kernel=adaptive_kernel
-        )
+            adaptive_kernel=adaptive_kernel)
 
         samples = [sample.numpy() for sample in samples]
-        acceptance_rate = np.mean(kernel_results)
+        acceptance_rate = np.mean(is_accepted.numpy())
 
-        print("acceptance rate", acceptance_rate)
+        print(f"acceptance rate: {acceptance_rate}")
 
         mean = [np.mean(sample, axis=0) for sample in samples]
         variance = [np.var(sample, axis=0) for sample in samples]
 
-        # Debugging output
-        for i, (m, v) in enumerate(zip(mean, variance)):
-            print(f"Layer {i}: mean shape: {m.shape}, variance shape: {v.shape}")
+         # Debugging output
+        # for i, (m, v) in enumerate(zip(mean, variance)):
+        #     print(f"Layer {i}: mean shape: {m.shape}, variance shape: {v.shape}")
 
         return mean, variance

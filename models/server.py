@@ -1,5 +1,6 @@
 import threading
 import numpy as np
+import concurrent.futures
 
 from baseline_constants import BYTES_WRITTEN_KEY, BYTES_READ_KEY, LOCAL_COMPUTATIONS_KEY
 from utils.client_resource_utils import calculate_hardware_score, calculate_network_score, calculate_data_quality_score
@@ -39,11 +40,11 @@ class Server:
                 training_times.append(t_time)
                 upload_times.append(u_time)
 
-        threads = [threading.Thread(target=train_client, args=(c,)) for c in clients]
-        for thread in threads:
-            thread.start()
-        for thread in threads:
-            thread.join()
+         # Use ThreadPoolExecutor to limit the number of concurrent threads
+        with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
+            futures = [executor.submit(train_client, c) for c in clients]
+            for future in concurrent.futures.as_completed(futures):
+                future.result()  # wait for all threads to complete
 
         # Use the maximum time spent in any operation across all clients as the simulated time for that operation
         total_download_time = max(download_times) if download_times else 0

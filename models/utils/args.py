@@ -36,7 +36,7 @@ def parse_args():
     parser.add_argument('--batch-size',
                     help='batch size when clients train on data;',
                     type=int,
-                    default=16)
+                    default=10)
     parser.add_argument('--seed',
                     help='seed for random client sampling and batch splitting',
                     type=int,
