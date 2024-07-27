@@ -30,12 +30,12 @@ class Server:
         def train_client(c):
             self.updates = []
             c.model.set_params(self.model)
-            comp, num_samples, update, d_time, t_time, u_time = c.train(num_epochs, batch_size, minibatch, simulate_delays)
+            comp, num_samples, update, elbo, variance, d_time, t_time, u_time = c.train(num_epochs, batch_size, minibatch, simulate_delays)
             with threading.Lock():
                 sys_metrics[c.id][BYTES_READ_KEY] += c.model.size
                 sys_metrics[c.id][BYTES_WRITTEN_KEY] += c.model.size
                 sys_metrics[c.id][LOCAL_COMPUTATIONS_KEY] = comp
-                self.updates.append((num_samples, update))
+                self.updates.append((num_samples, update, elbo, variance))
                 # Store times for each client
                 download_times.append(d_time)
                 training_times.append(t_time)
@@ -54,9 +54,11 @@ class Server:
 
         return sys_metrics, total_download_time, total_training_time, total_upload_time
 
-    def update_model(self, method='fedavg'):
+    def update_model(self, method='bayesian'):
         if method == 'fedavg':
             self.aggregate_updates_fedavg()
+        elif method == 'bayesian':
+            self.aggregate_updates_bayesian()
 
     def aggregate_updates_fedavg(self):
         print("inside fedavg...")
@@ -70,6 +72,27 @@ class Server:
 
         self.model = averaged_soln
         self.updates = []
+
+        self.updates = []
+
+    def aggregate_updates_bayesian(self):
+        print("inside bayesian aggregation...")
+        total_weight = 0.
+        weighted_mean = [np.zeros_like(v.numpy(), dtype=np.float32) for v in self.updates[0][1]]
+        weighted_variance = [np.zeros_like(v.numpy(), dtype=np.float32) for v in self.updates[0][1]]
+
+        for (num_samples, client_model, elbo, variance) in self.updates:
+            weight = elbo / np.mean(variance)
+            total_weight += weight
+            for i, (mean_update, var_update) in enumerate(zip(client_model, variance)):
+                weighted_mean[i] += weight * mean_update.numpy().astype(np.float32)
+                weighted_variance[i] += weight * var_update
+
+        aggregated_mean = [mean / total_weight for mean in weighted_mean]
+        aggregated_variance = [var / total_weight for var in weighted_variance]
+
+        for i, variable in enumerate(self.model):
+            variable.assign(aggregated_mean[i])
 
         self.updates = []
 
