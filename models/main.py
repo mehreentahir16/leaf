@@ -197,7 +197,7 @@ def main():
         "total_unique_training_samples": total_unique_samples
     }
 
-    file_name = f"results/data_{args.dataset}_selection_{args.client_selection_strategy}_clients_{args.clients_per_round}_budget_{budget}_results_test.pkl"
+    file_name = f"results/data_{args.dataset}_selection_{args.client_selection_strategy}_clients_{args.clients_per_round}_results.pkl"
 
     # Ensure the directory exists
     os.makedirs(os.path.dirname(file_name), exist_ok=True)

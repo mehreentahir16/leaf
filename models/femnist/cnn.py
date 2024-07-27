@@ -6,8 +6,6 @@ os.environ['OMP_NUM_THREADS'] = '1'
 
 import numpy as np
 import tensorflow as tf
-import tensorflow_probability as tfp
-tfd = tfp.distributions
 
 from model import Model
 
@@ -52,55 +50,3 @@ class ClientModel(Model):
 
     def process_y(self, raw_y_batch):
         return np.array(raw_y_batch)
-
-    @tf.function
-    def target_log_prob_fn(self, cloned_model, *weights):
-        for variable, weight in zip(cloned_model.trainable_variables, weights):
-            variable.assign(weight)
-        log_prob = -tf.reduce_mean(
-            [tf.reduce_sum(g * w) for g, w in zip(self.stored_gradients, weights)])
-        return log_prob
-
-    @tf.function
-    def run_chain(self, initial_state, num_samples, num_burnin_steps, adaptive_kernel):
-        return tfp.mcmc.sample_chain(
-            num_results=num_samples,
-            num_burnin_steps=num_burnin_steps,
-            current_state=initial_state,
-            kernel=adaptive_kernel,
-            trace_fn=lambda _, pkr: pkr.inner_results.is_accepted
-        )
-
-    def hmc_sample(self, num_samples=10, num_burnin_steps=5, step_size=0.001):
-        # Clone the model
-        cloned_model = tf.keras.models.clone_model(self.model)
-        cloned_model.set_weights(self.model.get_weights())
-
-        initial_state = [var.numpy() for var in cloned_model.trainable_variables]
-
-        adaptive_kernel = tfp.mcmc.SimpleStepSizeAdaptation(
-            inner_kernel=tfp.mcmc.HamiltonianMonteCarlo(
-                target_log_prob_fn=lambda *args: self.target_log_prob_fn(cloned_model, *args),
-                step_size=step_size,
-                num_leapfrog_steps=3),
-            num_adaptation_steps=int(num_burnin_steps * 0.8))
-
-        samples, is_accepted = self.run_chain(
-            initial_state=initial_state,
-            num_samples=num_samples,
-            num_burnin_steps=num_burnin_steps,
-            adaptive_kernel=adaptive_kernel)
-
-        samples = [sample.numpy() for sample in samples]
-        acceptance_rate = np.mean(is_accepted.numpy())
-
-        print(f"acceptance rate: {acceptance_rate}")
-
-        mean = [np.mean(sample, axis=0) for sample in samples]
-        variance = [np.var(sample, axis=0) for sample in samples]
-
-         # Debugging output
-        # for i, (m, v) in enumerate(zip(mean, variance)):
-        #     print(f"Layer {i}: mean shape: {m.shape}, variance shape: {v.shape}")
-
-        return mean, variance
