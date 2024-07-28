@@ -19,9 +19,13 @@ class ClientModel(Model):
         self.num_classes = num_classes
         super(ClientModel, self).__init__(seed, lr)
 
-        # Initialize variational parameters (mean and variance)
+        # Initialize variational parameters (mean and log_variance)
         self.mean = [tf.Variable(initial_value=v.numpy(), trainable=True) for v in self.model.trainable_variables]
-        self.variance = [tf.Variable(initial_value=tf.ones_like(v.numpy()), trainable=True) for v in self.model.trainable_variables]
+        self.log_variance = [tf.Variable(initial_value=tf.zeros_like(v.numpy()), trainable=True) for v in self.model.trainable_variables]
+
+        # Separate optimizers for model parameters and variational parameters
+        self.var_optimizer_mean = tf.keras.optimizers.SGD(learning_rate=self.lr)
+        self.var_optimizer_log_variance = tf.keras.optimizers.SGD(learning_rate=self.lr)
 
     def create_model(self):
         inputs = tf.keras.Input(shape=(28 * 28,), name='features')
@@ -59,8 +63,11 @@ class ClientModel(Model):
     def elbo(self, input_data, target_data):
         logits = self.model(input_data, training=True)
         log_likelihood = -self.loss_fn()(target_data, logits)
-        kl_divergence = sum([tf.reduce_sum(var) for var in self.variance])
-        print(f"kl_divergence: {kl_divergence}")
+        
+        kl_divergence = 0
+        for mean, log_var in zip(self.mean, self.log_variance):
+            kl_divergence += tf.reduce_sum(-0.5 * (1 + log_var - tf.square(mean) - tf.exp(log_var)))
+        
         return log_likelihood - kl_divergence
 
     def train(self, data, num_epochs, batch_size):
@@ -68,9 +75,7 @@ class ClientModel(Model):
             self.run_epoch(data, batch_size)
         update = self.get_params()
         elbo = self.calculate_elbo(data, batch_size)
-        variance = [tf.reduce_mean(var).numpy() for var in self.variance]
-        print(f"elbo: {elbo}")
-        print(f"variance: {variance}")
+        variance = [tf.reduce_mean(tf.exp(log_var)).numpy() for log_var in self.log_variance]
         
         batch_processing = len(data['y']) // batch_size
         if batch_processing == 0:
@@ -78,6 +83,46 @@ class ClientModel(Model):
 
         comp = num_epochs * batch_processing * batch_size * self.flops
         return comp, update, elbo, variance
+
+    def run_epoch(self, data, batch_size):
+        epoch_loss = 0
+        epoch_accuracy = 0
+        num_batches = 0
+        
+        for batched_x, batched_y in batch_data(data, batch_size, seed=self.seed):
+            input_data = self.process_x(batched_x)
+            target_data = self.process_y(batched_y)
+            
+            with tf.GradientTape(persistent=True) as tape:
+                logits = self.model(input_data, training=True)
+                loss = self.model.compiled_loss(target_data, logits)
+                
+                # Add KL divergence to the loss
+                kl_divergence = 0
+                for mean, log_var in zip(self.mean, self.log_variance):
+                    kl_divergence += tf.reduce_sum(-0.5 * (1 + log_var - tf.square(mean) - tf.exp(log_var)))
+                
+                loss += kl_divergence
+            
+            gradients = tape.gradient(loss, self.model.trainable_variables)
+            mean_gradients = tape.gradient(loss, self.mean)
+            log_variance_gradients = tape.gradient(loss, self.log_variance)
+            
+            self.optimizer.apply_gradients(zip(gradients, self.model.trainable_variables))
+            self.var_optimizer_mean.apply_gradients(zip(mean_gradients, self.mean))
+            self.var_optimizer_log_variance.apply_gradients(zip(log_variance_gradients, self.log_variance))
+            
+            epoch_loss += loss.numpy()
+            correct_predictions = tf.reduce_sum(tf.cast(tf.equal(tf.argmax(logits, axis=1), target_data), tf.float32))
+            epoch_accuracy += correct_predictions.numpy()
+            num_batches += 1
+        
+        self.stored_gradients = gradients
+        
+        epoch_loss /= num_batches
+        epoch_accuracy /= num_batches * batch_size
+        
+        print(f"Epoch: Loss = {epoch_loss}, Accuracy = {epoch_accuracy}") 
 
     def calculate_elbo(self, data, batch_size):
         elbo_total = 0

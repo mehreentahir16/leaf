@@ -1,3 +1,4 @@
+import ot
 import threading
 import numpy as np
 import tensorflow as tf
@@ -13,6 +14,9 @@ class Server:
         self.model = client_model.get_params()
         self.selected_clients = []
         self.updates = []
+        self.smoothing_factor = 0.2
+        self.previous_aggregated_mean = None
+        self.previous_aggregated_variance = None
 
     def train_model(self, num_epochs, batch_size=10, minibatch=None, clients=None, simulate_delays=True):
         if clients is None:
@@ -54,11 +58,13 @@ class Server:
 
         return sys_metrics, total_download_time, total_training_time, total_upload_time
 
-    def update_model(self, method='bayesian'):
+    def update_model(self, method='hierarchical_bayesian'):
         if method == 'fedavg':
             self.aggregate_updates_fedavg()
         elif method == 'bayesian':
             self.aggregate_updates_bayesian()
+        elif method == 'hierarchical_bayesian':
+            self.aggregate_updates_hierarchical_bayesian()
 
     def aggregate_updates_fedavg(self):
         print("inside fedavg...")
@@ -71,8 +77,6 @@ class Server:
         averaged_soln = [v / total_weight for v in base]
 
         self.model = averaged_soln
-        self.updates = []
-
         self.updates = []
 
     def aggregate_updates_bayesian(self):
@@ -90,6 +94,64 @@ class Server:
 
         aggregated_mean = [mean / total_weight for mean in weighted_mean]
         aggregated_variance = [var / total_weight for var in weighted_variance]
+
+        for i, variable in enumerate(self.model):
+            variable.assign(aggregated_mean[i])
+
+        self.updates = []
+
+    # def aggregate_updates_hierarchical_bayesian(self):
+
+    #     print("inside (simple) hierarchical bayesian aggregation ...")
+        
+    #     mean_updates = [update[1] for update in self.updates]
+    #     variance_updates = [update[3] for update in self.updates]
+
+    #     aggregated_mean = []
+    #     aggregated_variance = []
+
+    #     for i in range(len(mean_updates[0])):
+    #         inv_variances = [1.0 / var[i] for var in variance_updates]
+    #         total_inv_variance = np.sum(inv_variances)
+    #         normalized_weights = [inv_var / total_inv_variance for inv_var in inv_variances]
+
+    #         mean_sum = np.sum([normalized_weights[j] * mean_updates[j][i].numpy() for j in range(len(mean_updates))], axis=0)
+    #         variance_sum = np.sum([normalized_weights[j] * variance_updates[j][i] for j in range(len(variance_updates))], axis=0)
+            
+    #         aggregated_mean.append(mean_sum)
+    #         aggregated_variance.append(variance_sum)
+        
+    #     for i, variable in enumerate(self.model):
+    #         variable.assign(aggregated_mean[i])
+
+    #     self.updates = []
+
+    def aggregate_updates_hierarchical_bayesian(self):
+        print("inside hierarchical bayesian aggregation (with smoothing factor)...")
+        
+        mean_updates = [update[1] for update in self.updates]
+        variance_updates = [update[3] for update in self.updates]
+
+        aggregated_mean = []
+        aggregated_variance = []
+
+        for i in range(len(mean_updates[0])):
+            inv_variances = [1.0 / (var[i] + 1e-8) for var in variance_updates]
+            total_inv_variance = np.sum(inv_variances)
+            normalized_weights = [inv_var / total_inv_variance for inv_var in inv_variances]
+
+            mean_sum = np.sum([normalized_weights[j] * mean_updates[j][i].numpy() for j in range(len(mean_updates))], axis=0)
+            variance_sum = np.sum([normalized_weights[j] * variance_updates[j][i] for j in range(len(variance_updates))], axis=0)
+
+            if self.previous_aggregated_mean is not None:
+                mean_sum = self.smoothing_factor * self.previous_aggregated_mean[i] + (1 - self.smoothing_factor) * mean_sum
+                variance_sum = self.smoothing_factor * self.previous_aggregated_variance[i] + (1 - self.smoothing_factor) * variance_sum
+            
+            aggregated_mean.append(mean_sum)
+            aggregated_variance.append(variance_sum)
+
+        self.previous_aggregated_mean = aggregated_mean
+        self.previous_aggregated_variance = aggregated_variance
 
         for i, variable in enumerate(self.model):
             variable.assign(aggregated_mean[i])
