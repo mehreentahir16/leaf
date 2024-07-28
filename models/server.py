@@ -31,10 +31,12 @@ class Server:
         training_times = []
         upload_times = []
 
+        global_params = self.model
+
         def train_client(c):
             self.updates = []
             c.model.set_params(self.model)
-            comp, num_samples, update, elbo, variance, d_time, t_time, u_time = c.train(num_epochs, batch_size, minibatch, simulate_delays)
+            comp, num_samples, update, elbo, variance, d_time, t_time, u_time = c.train(num_epochs, batch_size, minibatch, global_params, simulate_delays)
             with threading.Lock():
                 sys_metrics[c.id][BYTES_READ_KEY] += c.model.size
                 sys_metrics[c.id][BYTES_WRITTEN_KEY] += c.model.size
@@ -58,9 +60,11 @@ class Server:
 
         return sys_metrics, total_download_time, total_training_time, total_upload_time
 
-    def update_model(self, method='hierarchical_bayesian'):
+    def update_model(self, method='fedprox'):
         if method == 'fedavg':
             self.aggregate_updates_fedavg()
+        elif method == 'fedprox':
+            self.aggregate_updates_fedprox()
         elif method == 'bayesian':
             self.aggregate_updates_bayesian()
         elif method == 'hierarchical_bayesian':
@@ -71,6 +75,20 @@ class Server:
         total_weight = 0.
         base = [np.zeros_like(v.numpy(), dtype=np.float32) for v in self.updates[0][1]]
         for (client_samples, client_model) in self.updates:
+            total_weight += client_samples
+            for i, v in enumerate(client_model):
+                base[i] += (client_samples * v.numpy().astype(np.float32))
+        averaged_soln = [v / total_weight for v in base]
+
+        self.model = averaged_soln
+        self.updates = []
+
+    def aggregate_updates_fedprox(self):
+        """Aggregate client updates using FedProx."""
+        print("inside FedProx aggregation...")
+        total_weight = 0.
+        base = [np.zeros_like(v.numpy(), dtype=np.float32) for v in self.updates[0][1]]
+        for (client_samples, client_model, _, _) in self.updates:
             total_weight += client_samples
             for i, v in enumerate(client_model):
                 base[i] += (client_samples * v.numpy().astype(np.float32))

@@ -52,7 +52,7 @@ class Client:
         }
         return random.choice(list(conditions.values()))
 
-    def train(self, num_epochs, batch_size, minibatch, simulate_delays=True):
+    def train(self, num_epochs, batch_size, minibatch, global_params, simulate_delays=True):
         """Trains on self.model using the client's train_data.
 
         Args:
@@ -80,7 +80,7 @@ class Client:
 
             if minibatch is None:
                 data = self.train_data
-                comp, update, elbo, variance = self.model.train(data, num_epochs, batch_size)
+                comp, update, elbo, variance = self.model.train(data, num_epochs, batch_size, global_params)
             else:
                 frac = min(1.0, minibatch)
                 num_data = max(1, int(frac*len(self.train_data["x"])))
@@ -100,7 +100,7 @@ class Client:
 
             if minibatch is None:
                 data = self.train_data
-                comp, update, _, _ = self.model.train(data, num_epochs, batch_size)
+                comp, update, _, _ = self.model.train(data, num_epochs, batch_size, global_params)
                 
             else:
                 frac = min(1.0, minibatch)

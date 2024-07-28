@@ -70,9 +70,9 @@ class ClientModel(Model):
         
         return log_likelihood - kl_divergence
 
-    def train(self, data, num_epochs, batch_size):
+    def train(self, data, num_epochs, batch_size, global_params):
         for i in range(num_epochs):
-            self.run_epoch(data, batch_size)
+            self.run_epoch(data, batch_size, global_params)
         update = self.get_params()
         elbo = self.calculate_elbo(data, batch_size)
         variance = [tf.reduce_mean(tf.exp(log_var)).numpy() for log_var in self.log_variance]
@@ -84,33 +84,27 @@ class ClientModel(Model):
         comp = num_epochs * batch_processing * batch_size * self.flops
         return comp, update, elbo, variance
 
-    def run_epoch(self, data, batch_size):
+    def run_epoch(self, data, batch_size, global_params=None):
         epoch_loss = 0
         epoch_accuracy = 0
         num_batches = 0
-        
+        mu=0.01
+
         for batched_x, batched_y in batch_data(data, batch_size, seed=self.seed):
             input_data = self.process_x(batched_x)
             target_data = self.process_y(batched_y)
             
-            with tf.GradientTape(persistent=True) as tape:
+            with tf.GradientTape() as tape:
                 logits = self.model(input_data, training=True)
                 loss = self.model.compiled_loss(target_data, logits)
-                
-                # Add KL divergence to the loss
-                kl_divergence = 0
-                for mean, log_var in zip(self.mean, self.log_variance):
-                    kl_divergence += tf.reduce_sum(-0.5 * (1 + log_var - tf.square(mean) - tf.exp(log_var)))
-                
-                loss += kl_divergence
-            
+                if global_params is not None:
+                    prox_term = 0
+                    for w, w_global in zip(self.model.trainable_variables, global_params):
+                        prox_term += tf.reduce_sum(tf.square(w - w_global))
+                    loss += (mu / 2) * prox_term
+
             gradients = tape.gradient(loss, self.model.trainable_variables)
-            mean_gradients = tape.gradient(loss, self.mean)
-            log_variance_gradients = tape.gradient(loss, self.log_variance)
-            
             self.optimizer.apply_gradients(zip(gradients, self.model.trainable_variables))
-            self.var_optimizer_mean.apply_gradients(zip(mean_gradients, self.mean))
-            self.var_optimizer_log_variance.apply_gradients(zip(log_variance_gradients, self.log_variance))
             
             epoch_loss += loss.numpy()
             correct_predictions = tf.reduce_sum(tf.cast(tf.equal(tf.argmax(logits, axis=1), target_data), tf.float32))
@@ -119,10 +113,11 @@ class ClientModel(Model):
         
         self.stored_gradients = gradients
         
+        # Averaging over all batches
         epoch_loss /= num_batches
         epoch_accuracy /= num_batches * batch_size
         
-        print(f"Epoch: Loss = {epoch_loss}, Accuracy = {epoch_accuracy}") 
+        print(f"Epoch: Loss = {epoch_loss}, Accuracy = {epoch_accuracy}")  
 
     def calculate_elbo(self, data, batch_size):
         elbo_total = 0
