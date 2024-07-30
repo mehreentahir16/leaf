@@ -1,4 +1,3 @@
-import ot
 import threading
 import numpy as np
 import tensorflow as tf
@@ -14,9 +13,11 @@ class Server:
         self.model = client_model.get_params()
         self.selected_clients = []
         self.updates = []
-        self.smoothing_factor = 0.2
+        self.smoothing_factor = 0.1
         self.previous_aggregated_mean = None
         self.previous_aggregated_variance = None
+        self.aggregated_means_history = []
+        self.aggregated_variances_history = []
 
     def train_model(self, num_epochs, batch_size=10, minibatch=None, clients=None, simulate_delays=True):
         if clients is None:
@@ -58,9 +59,13 @@ class Server:
 
         return sys_metrics, total_download_time, total_training_time, total_upload_time
 
-    def update_model(self, method='hierarchical_bayesian'):
+    def update_model(self, method='fedopt'):
         if method == 'fedavg':
             self.aggregate_updates_fedavg()
+        elif method == 'fedma':
+            self.aggregate_updates_fedma()
+        elif method == 'fedopt':
+            self.aggregate_updates_fedopt()
         elif method == 'bayesian':
             self.aggregate_updates_bayesian()
         elif method == 'hierarchical_bayesian':
@@ -70,13 +75,30 @@ class Server:
         print("inside fedavg...")
         total_weight = 0.
         base = [np.zeros_like(v.numpy(), dtype=np.float32) for v in self.updates[0][1]]
-        for (client_samples, client_model) in self.updates:
+        for (client_samples, client_model, _, _) in self.updates:
             total_weight += client_samples
             for i, v in enumerate(client_model):
                 base[i] += (client_samples * v.numpy().astype(np.float32))
         averaged_soln = [v / total_weight for v in base]
 
         self.model = averaged_soln
+        self.updates = []
+
+    def aggregate_updates_fedopt(self):
+        optimizer=tf.keras.optimizers.Adam()
+        print("Inside FedOpt aggregation...")
+        total_weight = 0.
+        base = [np.zeros_like(v.numpy(), dtype=np.float32) for v in self.updates[0][1]]
+        for (client_samples, client_model, _, _) in self.updates:
+            total_weight += client_samples
+            for i, v in enumerate(client_model):
+                base[i] += (client_samples * v.numpy().astype(np.float32))
+        averaged_soln = [v / total_weight for v in base]
+
+        grads_and_vars = [(tf.convert_to_tensor(v - variable.numpy(), dtype=tf.float32), variable) 
+                          for v, variable in zip(averaged_soln, self.model)]
+        optimizer.apply_gradients(grads_and_vars)
+
         self.updates = []
 
     def aggregate_updates_bayesian(self):
@@ -128,7 +150,7 @@ class Server:
 
     def aggregate_updates_hierarchical_bayesian(self):
         print("inside hierarchical bayesian aggregation (with smoothing factor)...")
-        
+
         mean_updates = [update[1] for update in self.updates]
         variance_updates = [update[3] for update in self.updates]
 
@@ -146,15 +168,48 @@ class Server:
             if self.previous_aggregated_mean is not None:
                 mean_sum = self.smoothing_factor * self.previous_aggregated_mean[i] + (1 - self.smoothing_factor) * mean_sum
                 variance_sum = self.smoothing_factor * self.previous_aggregated_variance[i] + (1 - self.smoothing_factor) * variance_sum
-            
+
             aggregated_mean.append(mean_sum)
             aggregated_variance.append(variance_sum)
 
         self.previous_aggregated_mean = aggregated_mean
         self.previous_aggregated_variance = aggregated_variance
 
+        self.aggregated_means_history.append(aggregated_mean)
+        self.aggregated_variances_history.append(aggregated_variance)
+
         for i, variable in enumerate(self.model):
             variable.assign(aggregated_mean[i])
+
+        self.updates = []
+
+    def match_and_average(self, updates):
+        # Assuming updates is a list of model parameter updates from clients
+        num_clients = len(updates)
+        matched_params = []
+
+        # Iterate over each layer
+        for layer_idx in range(len(updates[0])):
+            # Collect parameters for this layer from each client
+            layer_params = [client[layer_idx].numpy() for client in updates]
+            
+            # Stack layer parameters for matching
+            stacked_params = np.stack(layer_params, axis=0)
+            
+            # Calculate the mean parameters for the layer
+            mean_params = np.mean(stacked_params, axis=0)
+            
+            matched_params.append(mean_params)
+
+        return matched_params
+
+    def aggregate_updates_fedma(self):
+        print("Inside FedMA aggregation...")
+        mean_updates = [update[1] for update in self.updates]
+        averaged_params = self.match_and_average(mean_updates)
+
+        for i, variable in enumerate(self.model):
+            variable.assign(averaged_params[i])
 
         self.updates = []
 

@@ -26,7 +26,7 @@ def batch_data(data, batch_size, seed):
         batched_y = data_y[i:i+batch_size]
         yield (batched_x, batched_y)
 
-def read_dir(data_dir, introduce_mislabeled=False, mislabel_rate=0.0):
+def read_dir(data_dir, introduce_mislabeled=False, mislabel_rate=0.0, mislabel_clients_fraction=0.0):
     clients = []
     groups = []
     data = defaultdict(lambda: None)
@@ -41,26 +41,32 @@ def read_dir(data_dir, introduce_mislabeled=False, mislabel_rate=0.0):
         if 'hierarchies' in cdata:
             groups.extend(cdata['hierarchies'])
         
-        # # If the flag is set, introduce mislabeled data
-        # if introduce_mislabeled:
-        #     for user in cdata['users']:
-        #         labels = cdata['user_data'][user]['y']
-        #         num_samples = len(labels)
-        #         num_mislabeled = int(mislabel_rate * num_samples)
+        # Determine which clients to mislabel
+        if introduce_mislabeled:
+            print(f"Introducing mislabeled data...")
+            num_clients = len(cdata['users'])
+            num_mislabel_clients = int(mislabel_clients_fraction * num_clients)
+            mislabel_clients = np.random.choice(cdata['users'], size=num_mislabel_clients, replace=False)
 
-        #         mislabel_indices = np.random.choice(range(num_samples), size=num_mislabeled, replace=False)
-        #         for idx in mislabel_indices:
-        #             original_label = labels[idx]
-        #             # Assuming labels are integers and there are 62 classes (0-61)
-        #             # new_label = np.random.choice([l for l in range(62) if l != original_label])
-        #             # for celeba
-        #             new_label = (original_label + 1) % 2
+            for user in mislabel_clients:
+                labels = cdata['user_data'][user]['y']
+                num_samples = len(labels)
+                num_mislabeled = int(mislabel_rate * num_samples)
 
-        #             labels[idx] = new_label
+                mislabel_indices = np.random.choice(range(num_samples), size=num_mislabeled, replace=False)
+                for idx in mislabel_indices:
+                    original_label = labels[idx]
+                    # For FEMNIST (assuming 62 classes)
+                    new_label = np.random.choice([l for l in range(62) if l != original_label])
+                    # For CelebA (binary classification)
+                    # new_label = (original_label + 1) % 2
 
-        #         cdata['user_data'][user]['y'] = labels
+                    labels[idx] = new_label
+
+                cdata['user_data'][user]['y'] = labels
 
         data.update(cdata['user_data'])
+
 
     clients = list(sorted(data.keys()))
     return clients, groups, data
@@ -80,7 +86,7 @@ def read_data(train_data_dir, test_data_dir):
         train_data: dictionary of train data
         test_data: dictionary of test data
     '''
-    train_clients, train_groups, train_data = read_dir(train_data_dir, introduce_mislabeled=False, mislabel_rate=0.0)
+    train_clients, train_groups, train_data = read_dir(train_data_dir, introduce_mislabeled=True, mislabel_rate=0.2, mislabel_clients_fraction=0.3)
     test_clients, test_groups, test_data = read_dir(test_data_dir)
 
     assert train_clients == test_clients

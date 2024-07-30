@@ -17,8 +17,8 @@ class ClientModel(Model):
         super(ClientModel, self).__init__(seed, lr)
 
     def create_model(self):
-        features = tf.placeholder(tf.float32, [None, self.input_dim])
-        labels = tf.placeholder(tf.int64, [None])
+        features = tf.compat.v1.placeholder(tf.float32, [None, self.input_dim])
+        labels = tf.compat.v1.placeholder(tf.int64, [None])
 
         logits = tf.layers.dense(features, self.num_classes, activation=tf.nn.sigmoid)
         loss = tf.nn.sparse_softmax_cross_entropy_with_logits(
@@ -27,11 +27,11 @@ class ClientModel(Model):
         
         train_op = self.optimizer.minimize(
             loss=loss,
-            global_step=tf.train.get_global_step())
+            global_step=tf.compat.v1.train.get_global_step())
 
         predictions = tf.argmax(logits, axis=-1)
         correct_pred = tf.equal(predictions, labels)
-        eval_metric_ops = tf.count_nonzero(correct_pred)
+        eval_metric_ops = tf.math.count_nonzero(correct_pred)
         
         return features, labels, train_op, eval_metric_ops, tf.reduce_mean(loss)
 
