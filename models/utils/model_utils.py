@@ -86,7 +86,7 @@ def read_data(train_data_dir, test_data_dir):
         train_data: dictionary of train data
         test_data: dictionary of test data
     '''
-    train_clients, train_groups, train_data = read_dir(train_data_dir, introduce_mislabeled=True, mislabel_rate=0.2, mislabel_clients_fraction=0.3)
+    train_clients, train_groups, train_data = read_dir(train_data_dir, introduce_mislabeled=False, mislabel_rate=0.2, mislabel_clients_fraction=0.3)
     test_clients, test_groups, test_data = read_dir(test_data_dir)
 
     assert train_clients == test_clients

@@ -59,9 +59,11 @@ class Server:
 
         return sys_metrics, total_download_time, total_training_time, total_upload_time
 
-    def update_model(self, method='fedopt'):
+    def update_model(self, method='fedprox'):
         if method == 'fedavg':
             self.aggregate_updates_fedavg()
+        elif method == 'fedprox':
+            self.aggregate_updates_fedprox()
         elif method == 'fedma':
             self.aggregate_updates_fedma()
         elif method == 'fedopt':
@@ -76,6 +78,19 @@ class Server:
         total_weight = 0.
         base = [np.zeros_like(v.numpy(), dtype=np.float32) for v in self.updates[0][1]]
         for (client_samples, client_model, _, _) in self.updates:
+            total_weight += client_samples
+            for i, v in enumerate(client_model):
+                base[i] += (client_samples * v.numpy().astype(np.float32))
+        averaged_soln = [v / total_weight for v in base]
+
+        self.model = averaged_soln
+        self.updates = []
+
+    def aggregate_updates_fedprox(self):
+        print("inside fedprox...")
+        total_weight = 0.
+        base = [np.zeros_like(v.numpy(), dtype=np.float32) for v in self.updates[0][1]]
+        for (client_samples, client_model) in self.updates:
             total_weight += client_samples
             for i, v in enumerate(client_model):
                 base[i] += (client_samples * v.numpy().astype(np.float32))
@@ -102,10 +117,13 @@ class Server:
         self.updates = []
 
     def aggregate_updates_bayesian(self):
-        print("inside bayesian aggregation...")
+        print("inside bayesian aggregation with regularization...")
+
         total_weight = 0.
         weighted_mean = [np.zeros_like(v.numpy(), dtype=np.float32) for v in self.updates[0][1]]
-        weighted_variance = [np.zeros_like(v.numpy(), dtype=np.float32) for v in self.updates[0][1]]
+        weighted_variance = [np.zeros_like(v, dtype=np.float32) for v in self.updates[0][3]]
+
+        regularization_term = 0.0019  # Regularization strength
 
         for (num_samples, client_model, elbo, variance) in self.updates:
             weight = elbo / np.mean(variance)
@@ -118,35 +136,11 @@ class Server:
         aggregated_variance = [var / total_weight for var in weighted_variance]
 
         for i, variable in enumerate(self.model):
-            variable.assign(aggregated_mean[i])
+            update_value = aggregated_mean[i] - regularization_term * (variable.numpy() - aggregated_mean[i])
+            variable.assign(update_value)
 
         self.updates = []
 
-    # def aggregate_updates_hierarchical_bayesian(self):
-
-    #     print("inside (simple) hierarchical bayesian aggregation ...")
-        
-    #     mean_updates = [update[1] for update in self.updates]
-    #     variance_updates = [update[3] for update in self.updates]
-
-    #     aggregated_mean = []
-    #     aggregated_variance = []
-
-    #     for i in range(len(mean_updates[0])):
-    #         inv_variances = [1.0 / var[i] for var in variance_updates]
-    #         total_inv_variance = np.sum(inv_variances)
-    #         normalized_weights = [inv_var / total_inv_variance for inv_var in inv_variances]
-
-    #         mean_sum = np.sum([normalized_weights[j] * mean_updates[j][i].numpy() for j in range(len(mean_updates))], axis=0)
-    #         variance_sum = np.sum([normalized_weights[j] * variance_updates[j][i] for j in range(len(variance_updates))], axis=0)
-            
-    #         aggregated_mean.append(mean_sum)
-    #         aggregated_variance.append(variance_sum)
-        
-    #     for i, variable in enumerate(self.model):
-    #         variable.assign(aggregated_mean[i])
-
-    #     self.updates = []
 
     def aggregate_updates_hierarchical_bayesian(self):
         print("inside hierarchical bayesian aggregation (with smoothing factor)...")
@@ -178,8 +172,11 @@ class Server:
         self.aggregated_means_history.append(aggregated_mean)
         self.aggregated_variances_history.append(aggregated_variance)
 
+        regularization_term = 0.5
+
         for i, variable in enumerate(self.model):
-            variable.assign(aggregated_mean[i])
+            update_value = aggregated_mean[i] - regularization_term * (variable.numpy() - aggregated_mean[i])
+            variable.assign(update_value)
 
         self.updates = []
 
