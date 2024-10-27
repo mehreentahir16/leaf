@@ -185,7 +185,7 @@ def main():
     ckpt_path = os.path.join('checkpoints', args.dataset)
     if not os.path.exists(ckpt_path):
         os.makedirs(ckpt_path)
-    save_path = server.save_model(os.path.join(ckpt_path, '{}-hierarchical_bayesian_simple.weights.h5'.format(args.model)))
+    save_path = server.save_model(os.path.join(ckpt_path, '{}-fedprox.weights.h5'.format(args.model)))
     print('Model weights saved in path: %s' % save_path)
 
     # Saving results including training_time for each round
@@ -199,7 +199,7 @@ def main():
         "total_unique_training_samples": total_unique_samples
     }
 
-    file_name = f"results/data_{args.dataset}_selection_{args.client_selection_strategy}_clients_{args.clients_per_round}_batch{args.batch_size}_hierarchical_bayesian_results_simple.pkl"
+    file_name = f"results/data_{args.dataset}_selection_{args.client_selection_strategy}_clients_{args.clients_per_round}_batch{args.batch_size}_fedprox_results_simple.pkl"
 
     # Ensure the directory exists
     os.makedirs(os.path.dirname(file_name), exist_ok=True)

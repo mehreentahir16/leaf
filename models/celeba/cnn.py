@@ -66,9 +66,9 @@ class ClientModel(Model):
         
         return log_likelihood - kl_divergence
 
-    def train(self, data, num_epochs, batch_size):
+    def train(self, data, num_epochs, batch_size, global_params):
         for i in range(num_epochs):
-            self.run_epoch(data, batch_size)
+            self.run_epoch(data, batch_size, global_params)
         update = self.get_params()
         elbo = self.calculate_elbo(data, batch_size)
         variance = [tf.reduce_mean(tf.exp(log_var)).numpy() for log_var in self.log_variance]
@@ -80,7 +80,7 @@ class ClientModel(Model):
         comp = num_epochs * batch_processing * batch_size * self.flops
         return comp, update, elbo, variance
 
-    def run_epoch(self, data, batch_size):
+    def run_epoch(self, data, batch_size, global_params=None):
         epoch_loss = 0
         epoch_accuracy = 0
         num_batches = 0
@@ -94,12 +94,17 @@ class ClientModel(Model):
                 logits = self.model(input_data, training=True)
                 loss = self.model.compiled_loss(target_data, logits)
 
-                # Add KL divergence to the loss
-                kl_divergence = 0
-                for mean, log_var in zip(self.mean, self.log_variance):
-                    kl_divergence += tf.reduce_sum(-0.5 * (1 + log_var - tf.square(mean) - tf.exp(log_var)))
+                # Add proximal term
+                if global_params is not None:
+                    prox_term = tf.add_n([tf.reduce_sum(tf.square(var - gvar)) for var, gvar in zip(self.model.trainable_variables, global_params)])
+                    loss += (mu / 2) * prox_term
                 
-                loss += kl_divergence
+                # # Add KL divergence to the loss
+                # kl_divergence = 0
+                # for mean, log_var in zip(self.mean, self.log_variance):
+                #     kl_divergence += tf.reduce_sum(-0.5 * (1 + log_var - tf.square(mean) - tf.exp(log_var)))
+                
+                # loss += kl_divergence
             
             gradients = tape.gradient(loss, self.model.trainable_variables)
             mean_gradients = tape.gradient(loss, self.mean)

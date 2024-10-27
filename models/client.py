@@ -52,7 +52,7 @@ class Client:
         }
         return random.choice(list(conditions.values()))
 
-    def train(self, num_epochs, batch_size, minibatch, simulate_delays=True):
+    def train(self, num_epochs, batch_size, minibatch, global_params, simulate_delays=True):
         """Trains on self.model using the client's train_data.
 
         Args:
@@ -80,7 +80,7 @@ class Client:
 
             if minibatch is None:
                 data = self.train_data
-                comp, update, elbo, variance = self.model.train(data, num_epochs, batch_size)
+                comp, update, elbo, variance = self.model.train(data, num_epochs, batch_size, global_params)
             else:
                 frac = min(1.0, minibatch)
                 num_data = max(1, int(frac*len(self.train_data["x"])))
@@ -89,7 +89,7 @@ class Client:
 
                 # Minibatch trains for only 1 epoch - multiple local epochs don't make sense!
                 num_epochs = 1
-                comp, update, _, _ = self.model.train(data, num_epochs, num_data)
+                comp, update, _, _ = self.model.train(data, num_epochs, num_data, global_params)
             
             training_time = estimate_training_time(comp, self.hardware_config['CPU Count']*self.hardware_config['Cores'], self.hardware_config['Frequency'], self.hardware_config['CPU Utilization'], self.hardware_config['RAM'], self.hardware_config['Available RAM'])
             update_size = get_update_size(update)
@@ -100,7 +100,7 @@ class Client:
 
             if minibatch is None:
                 data = self.train_data
-                comp, update, _, _ = self.model.train(data, num_epochs, batch_size)
+                comp, update, _, _ = self.model.train(data, num_epochs, batch_size, global_params)
                 
             else:
                 frac = min(1.0, minibatch)
@@ -110,7 +110,7 @@ class Client:
 
                 # Minibatch trains for only 1 epoch - multiple local epochs don't make sense!
                 num_epochs = 1
-                comp, update, _, _ = self.model.train(data, num_epochs, num_data)
+                comp, update, _, _ = self.model.train(data, num_epochs, num_data, global_params)
             
         
         num_train_samples = len(data['y'])
