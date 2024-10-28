@@ -8,6 +8,8 @@ import random
 import pickle
 import tensorflow as tf
 
+import pandas as pd
+
 import metrics.writer as metrics_writer
 
 from baseline_constants import MAIN_PARAMS, MODEL_PARAMS
@@ -18,6 +20,8 @@ from model import ServerModel
 from utils.args import parse_args
 from utils.model_utils import read_data
 from client_selection_protocols import select_clients_randomly, select_clients_greedy, select_clients_price_based, client_selection_active, client_selection_pow_d, select_clients_resource_based, promethee_selection
+
+from models.clustering import run_hdbscan_clustering
 
 STAT_METRICS_PATH = 'metrics/stat_metrics.csv'
 SYS_METRICS_PATH = 'metrics/sys_metrics.csv'
@@ -63,6 +67,22 @@ def select_clients(strategy, round_number, clients, client_num_samples, costs, h
 
     return selected_clients
 
+def save_client_cluster_info(client_ids, gradient_magnitudes, gradient_variances, client_num_samples, losses, client_clusters):
+    client_data = {
+        'Client ID': client_ids,
+        'Num Samples': [client_num_samples.get(c_id, None) for c_id in client_ids],
+        'Gradient Magnitude': [gradient_magnitudes.get(c_id, None) for c_id in client_ids],
+        'Gradient Variance': [gradient_variances.get(c_id, None) for c_id in client_ids],
+        'Cluster': [client_clusters.get(c_id, -1) for c_id in client_ids]
+    }
+    
+    # Replace None with placeholders for debugging
+    df = pd.DataFrame(client_data).fillna('Missing')
+    df.to_csv('client_cluster_info.csv', index=False)
+    print("Client cluster information saved to client_cluster_info.csv")
+    print(df.head())  # Check the output to verify data correctness
+    return df
+
 def main():
 
     budget = None
@@ -107,14 +127,44 @@ def main():
 
     # Create clients
     clients = setup_clients(args.dataset, client_model, args.use_val_set)
-    client_ids, client_groups, client_num_samples, hardware_scores, network_scores, data_quality_scores, costs, losses = server.get_clients_info(clients)
+    client_ids, client_groups, client_num_samples, hardware_scores, network_scores, data_quality_scores, costs, losses, gradient_magnitudes, gradient_variances = server.get_clients_info(clients)
     print('Clients in Total: %d' % len(clients))
+
+    # Print the first few entries of each dictionary for debugging
+    print("Gradient Magnitudes (sample):", list(gradient_magnitudes.items())[:5])
+    print("Gradient Variances (sample):", list(gradient_variances.items())[:5])
+    print("Hardware Scores (sample):", list(hardware_scores.items())[:5])
+    print("Network Scores (sample):", list(network_scores.items())[:5])
+    print("Losses (sample):", list(losses.items())[:5])
+    print("Client Num Samples (sample):", list(client_num_samples.items())[:5])    
+
+    print("Length of client_ids:", len(client_ids))
+    print("Length of gradient_magnitudes:", len(gradient_magnitudes))
+    print("Length of gradient_variances:", len(gradient_variances))
+    print("Length of client_num_samples:", len(client_num_samples))
+    print("Length of losses:", len(losses))
+
 
     # Initial status
     print('--- Random Initialization ---')
     stat_writer_fn = get_stat_writer_function(client_ids, client_groups, client_num_samples, args)
     sys_writer_fn = get_sys_writer_function(args)
     print_stats(0, server, clients, client_num_samples, args, stat_writer_fn, args.use_val_set)
+
+    client_clusters = run_hdbscan_clustering(gradient_magnitudes, gradient_variances, hardware_scores, network_scores, losses, client_num_samples)
+    # client_ids = list(client_clusters.keys())
+    cluster_labels = np.array(list(client_clusters.values()))
+
+    df = save_client_cluster_info(
+    client_ids, 
+    gradient_magnitudes, 
+    gradient_variances, 
+    client_num_samples, 
+    losses,
+    client_clusters
+    )
+
+    print(df.head())
 
     test_accuracies = []
     test_losses = []

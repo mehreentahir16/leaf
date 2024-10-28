@@ -67,6 +67,7 @@ class Client:
         training_time = 0
         upload_time = 0
         if simulate_delays==True: 
+            initial_params = self.model.get_params()
             untrained_model_size = get_model_size(self.model)
             download_time = estimate_network_delay(untrained_model_size, self.network_config['Bandwidth'], self.network_config['Latency'])
             # time.sleep(download_time)
@@ -84,12 +85,17 @@ class Client:
                 num_epochs = 1
                 comp, update = self.model.train(data, num_epochs, num_data)
             
+            # Post-training: Calculate the difference (pseudo-gradient) between final and initial weights
+            pseudo_gradient = [update[i] - initial_params[i] for i in range(len(update))]
+            
             training_time = estimate_training_time(comp, self.hardware_config['CPU Count']*self.hardware_config['Cores'], self.hardware_config['Frequency'], self.hardware_config['CPU Utilization'], self.hardware_config['RAM'], self.hardware_config['Available RAM'])
             update_size = get_update_size(update)
             upload_time = estimate_network_delay(update_size, self.network_config['Bandwidth'], self.network_config['Latency'])
             # time.sleep(upload_time)
 
         else: 
+        
+            initial_params = self.model.get_params()
 
             if minibatch is None:
                 data = self.train_data
@@ -103,9 +109,14 @@ class Client:
                 # Minibatch trains for only 1 epoch - multiple local epochs don't make sense!
                 num_epochs = 1
                 comp, update = self.model.train(data, num_epochs, num_data)
+            pseudo_gradient = [update[i] - initial_params[i] for i in range(len(update))]
+
+        # Calculate gradient magnitude and variance
+        grad_magnitude = np.linalg.norm([np.linalg.norm(g) for g in pseudo_gradient])
+        grad_variance = np.var([np.linalg.norm(g) for g in pseudo_gradient])
         
         num_train_samples = len(data['y'])
-        return comp, num_train_samples, update, download_time, training_time, upload_time
+        return comp, num_train_samples, update, download_time, training_time, upload_time, grad_magnitude, grad_variance
 
     def test(self, set_to_use='test'):
         """Tests self.model on self.test_data.

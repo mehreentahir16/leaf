@@ -21,32 +21,39 @@ class Server:
         download_times = []
         training_times = []
         upload_times = []
+        gradient_magnitudes = {}
+        gradient_variances = {}
 
         def train_client(c):
             c.model.set_params(self.model)
-            comp, num_samples, update, d_time, t_time, u_time = c.train(num_epochs, batch_size, minibatch, simulate_delays)
+            comp, num_samples, update, d_time, t_time, u_time, grad_mag, grad_var = c.train(num_epochs, batch_size, minibatch, simulate_delays)
             with threading.Lock():
                 sys_metrics[c.id][BYTES_READ_KEY] += c.model.size
                 sys_metrics[c.id][BYTES_WRITTEN_KEY] += c.model.size
                 sys_metrics[c.id][LOCAL_COMPUTATIONS_KEY] = comp
                 self.updates.append((num_samples, update))
+
+                gradient_magnitudes[c.id] = grad_mag
+                gradient_variances[c.id] = grad_var
+
                 # Store times for each client
                 download_times.append(d_time)
                 training_times.append(t_time)
                 upload_times.append(u_time)
 
-        threads = [threading.Thread(target=train_client, args=(c,)) for c in clients]
-        for thread in threads:
-            thread.start()
-        for thread in threads:
-            thread.join()
+        for i in range(0, len(clients), 5):
+            threads = [threading.Thread(target=train_client, args=(c,)) for c in clients[i:i + 5]]
+            
+            for thread in threads:
+                thread.start()
+                thread.join()
 
         # Use the maximum time spent in any operation across all clients as the simulated time for that operation
         total_download_time = max(download_times) if download_times else 0
         total_training_time = max(training_times) if training_times else 0
         total_upload_time = max(upload_times) if upload_times else 0
 
-        return sys_metrics, total_download_time, total_training_time, total_upload_time
+        return sys_metrics, gradient_magnitudes, gradient_variances, total_download_time, total_training_time, total_upload_time
 
     def update_model(self):
         total_weight = 0.
@@ -100,9 +107,11 @@ class Server:
         data_quality_scores = {}
         raw_costs = {}
         losses = {}
+        # gradient_magnitudes = {}
+        # gradient_variances = {}
 
         # Train and test each client to get accuracy
-        sys_metrics, _, _, _= self.train_model(clients=clients, num_epochs=1, simulate_delays=False)  
+        sys_metrics, gradient_magnitudes, gradient_variances, _, _, _= self.train_model(clients=clients, num_epochs=1, simulate_delays=False)  
         accuracy_metrics = self.test_model(clients_to_test=clients, set_to_use='test')  # Get test metrics
 
         for c in clients:
@@ -139,7 +148,7 @@ class Server:
         costs = {c_id: (cost / max_cost) * 10 for c_id, cost in raw_costs.items()}  # Scale to 0-100
 
         # Return all gathered information, including new scores
-        return ids, groups, num_samples, hardware_scores, network_scores, data_quality_scores, costs, losses
+        return ids, groups, num_samples, hardware_scores, network_scores, data_quality_scores, costs, losses, gradient_magnitudes, gradient_variances
 
     def save_model(self, path):
         """Saves the server model on checkpoints/dataset/model.ckpt."""

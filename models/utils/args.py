@@ -23,7 +23,7 @@ def parse_args():
     parser.add_argument('--eval-every',
                     help='evaluate every ____ rounds;',
                     type=int,
-                    default=-1)
+                    default=1)
     parser.add_argument('--clients-per-round',
                     help='number of clients trained per round;',
                     type=int,

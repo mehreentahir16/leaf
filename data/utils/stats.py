@@ -70,6 +70,9 @@ def print_dataset_stats(name):
         bins = [2 * i for i in range(20)]
     if args.name == 'sent140':
         bins = [i for i in range(16)]
+    if args.name == 'cifar10' or args.name == 'cifar100':
+        bins = [i * 1000 for i in range(11)]
+
 
     hist, edges = np.histogram(num_samples, bins=bins)
     for e, h in zip(edges, hist):
