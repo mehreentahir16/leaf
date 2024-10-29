@@ -36,7 +36,7 @@ def parse_args():
     parser.add_argument('--batch-size',
                     help='batch size when clients train on data;',
                     type=int,
-                    default=10)
+                    default=5)
     parser.add_argument('--seed',
                     help='seed for random client sampling and batch splitting',
                     type=int,
@@ -64,7 +64,7 @@ def parse_args():
     epoch_capability_group.add_argument('--num-epochs',
                     help='number of epochs when clients train on data;',
                     type=int,
-                    default=1)
+                    default=2)
 
     parser.add_argument('-t',
                     help='simulation time: small, medium, or large;',

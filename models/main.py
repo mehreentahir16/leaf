@@ -21,7 +21,8 @@ from utils.args import parse_args
 from utils.model_utils import read_data
 from client_selection_protocols import select_clients_randomly, select_clients_greedy, select_clients_price_based, client_selection_active, client_selection_pow_d, select_clients_resource_based, promethee_selection
 
-from models.clustering import run_hdbscan_clustering
+from clustering import run_hdbscan_clustering, set_baseline_ranges
+from sklearn.neighbors import LocalOutlierFactor
 
 STAT_METRICS_PATH = 'metrics/stat_metrics.csv'
 SYS_METRICS_PATH = 'metrics/sys_metrics.csv'
@@ -155,16 +156,7 @@ def main():
     # client_ids = list(client_clusters.keys())
     cluster_labels = np.array(list(client_clusters.values()))
 
-    df = save_client_cluster_info(
-    client_ids, 
-    gradient_magnitudes, 
-    gradient_variances, 
-    client_num_samples, 
-    losses,
-    client_clusters
-    )
-
-    print(df.head())
+    baseline_ranges = set_baseline_ranges(client_clusters, gradient_magnitudes, gradient_variances, args.num_epochs)
 
     test_accuracies = []
     test_losses = []
@@ -185,7 +177,7 @@ def main():
         # if (i % 5 == 0) or i == 0:  # Select clients at the start and then every 5 rounds
         server.selected_clients = select_clients(selection_strategy, i, clients, client_num_samples, costs, hardware_scores, network_scores, data_quality_scores, losses, clients_per_round, budget=budget)
 
-        c_ids, c_groups, c_num_samples, c_hardware_scores, c_network_scores, c_data_quality_scores, c_costs, c_losses = server.get_clients_info(server.selected_clients)
+        c_ids, c_groups, c_num_samples, c_hardware_scores, c_network_scores, c_data_quality_scores, c_costs, c_losses, c_grad, c_var = server.get_clients_info(server.selected_clients)
 
         print("===========Client info=============")
         # print("selected client IDs", c_ids)
@@ -204,8 +196,37 @@ def main():
 
 
         # Simulate server model training on selected clients' data
-        sys_metrics, download_time, estimated_training_time, upload_time = server.train_model(num_epochs=args.num_epochs, batch_size=args.batch_size, minibatch=args.minibatch, simulate_delays=True)
+        sys_metrics, gradient_magnitudes, gradient_variances, download_time, estimated_training_time, upload_time = server.train_model(num_epochs=args.num_epochs, batch_size=args.batch_size, minibatch=args.minibatch, simulate_delays=True)
         sys_writer_fn(i + 1, c_ids, sys_metrics, c_groups, c_num_samples)
+
+        # # Anomaly Detection and Validation BEFORE Aggregation
+        # valid_clients = []
+        # for client_id, grad_mag in gradient_magnitudes.items():
+        #     cluster_id = client_clusters[client_id]
+        #     grad_var = gradient_variances[client_id]
+            
+        #     # Skip if client was flagged as an outlier cluster
+        #     if cluster_id == -1:
+        #         continue
+            
+        #     # Retrieve baseline ranges for this cluster
+        #     baseline = baseline_ranges[cluster_id]
+        #     within_baseline = (
+        #         baseline['magnitude_range'][0] <= grad_mag <= baseline['magnitude_range'][1] and
+        #         baseline['variance_range'][0] <= grad_var <= baseline['variance_range'][1]
+        #     )
+
+            # # Detect outliers using LOF
+            # data_for_lof = [[gradient_magnitudes[cid], gradient_variances[cid]] for cid in c_ids]
+            # lof = LocalOutlierFactor(n_neighbors=5, contamination=0.1)
+            # lof_labels = lof.fit_predict(data_for_lof)
+            # is_outlier = lof_labels[c_ids.index(client_id)] == -1
+
+            # Add to valid_clients if within baseline and not an LOF outlier
+            # if within_baseline:
+            #     valid_clients.append(client_id)
+            # else:
+            #     print(f"Client {client_id} flagged as anomalous and excluded from aggregation")
         
         # Update server model
         server.update_model()

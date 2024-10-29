@@ -11,7 +11,7 @@ class Server:
         self.selected_clients = []
         self.updates = []
 
-    def train_model(self, num_epochs, batch_size=10, minibatch=None, clients=None, simulate_delays=True):
+    def train_model(self, num_epochs, batch_size=5, minibatch=None, clients=None, simulate_delays=True):
         if clients is None:
             clients = self.selected_clients
 
