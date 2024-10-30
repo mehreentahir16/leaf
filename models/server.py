@@ -11,7 +11,7 @@ class Server:
         self.selected_clients = []
         self.updates = []
 
-    def train_model(self, num_epochs, batch_size=5, minibatch=None, clients=None, simulate_delays=True):
+    def train_model(self, num_epochs, batch_size=10, minibatch=None, clients=None, simulate_delays=True):
         if clients is None:
             clients = self.selected_clients
 
@@ -41,12 +41,11 @@ class Server:
                 training_times.append(t_time)
                 upload_times.append(u_time)
 
-        for i in range(0, len(clients), 5):
-            threads = [threading.Thread(target=train_client, args=(c,)) for c in clients[i:i + 5]]
-            
-            for thread in threads:
-                thread.start()
-                thread.join()
+        threads = [threading.Thread(target=train_client, args=(c,)) for c in clients]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
 
         # Use the maximum time spent in any operation across all clients as the simulated time for that operation
         total_download_time = max(download_times) if download_times else 0
@@ -107,8 +106,6 @@ class Server:
         data_quality_scores = {}
         raw_costs = {}
         losses = {}
-        # gradient_magnitudes = {}
-        # gradient_variances = {}
 
         # Train and test each client to get accuracy
         sys_metrics, gradient_magnitudes, gradient_variances, _, _, _= self.train_model(clients=clients, num_epochs=1, simulate_delays=False)  

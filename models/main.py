@@ -8,8 +8,6 @@ import random
 import pickle
 import tensorflow as tf
 
-import pandas as pd
-
 import metrics.writer as metrics_writer
 
 from baseline_constants import MAIN_PARAMS, MODEL_PARAMS
@@ -22,7 +20,9 @@ from utils.model_utils import read_data
 from client_selection_protocols import select_clients_randomly, select_clients_greedy, select_clients_price_based, client_selection_active, client_selection_pow_d, select_clients_resource_based, promethee_selection
 
 from clustering import run_hdbscan_clustering, set_baseline_ranges
+from isolationforest import apply_isolation_forest_scoring, check_for_anomalies
 from sklearn.neighbors import LocalOutlierFactor
+from sklearn.preprocessing import StandardScaler
 
 STAT_METRICS_PATH = 'metrics/stat_metrics.csv'
 SYS_METRICS_PATH = 'metrics/sys_metrics.csv'
@@ -67,22 +67,6 @@ def select_clients(strategy, round_number, clients, client_num_samples, costs, h
         raise ValueError("Invalid client selection strategy.")
 
     return selected_clients
-
-def save_client_cluster_info(client_ids, gradient_magnitudes, gradient_variances, client_num_samples, losses, client_clusters):
-    client_data = {
-        'Client ID': client_ids,
-        'Num Samples': [client_num_samples.get(c_id, None) for c_id in client_ids],
-        'Gradient Magnitude': [gradient_magnitudes.get(c_id, None) for c_id in client_ids],
-        'Gradient Variance': [gradient_variances.get(c_id, None) for c_id in client_ids],
-        'Cluster': [client_clusters.get(c_id, -1) for c_id in client_ids]
-    }
-    
-    # Replace None with placeholders for debugging
-    df = pd.DataFrame(client_data).fillna('Missing')
-    df.to_csv('client_cluster_info.csv', index=False)
-    print("Client cluster information saved to client_cluster_info.csv")
-    print(df.head())  # Check the output to verify data correctness
-    return df
 
 def main():
 
@@ -131,21 +115,6 @@ def main():
     client_ids, client_groups, client_num_samples, hardware_scores, network_scores, data_quality_scores, costs, losses, gradient_magnitudes, gradient_variances = server.get_clients_info(clients)
     print('Clients in Total: %d' % len(clients))
 
-    # Print the first few entries of each dictionary for debugging
-    print("Gradient Magnitudes (sample):", list(gradient_magnitudes.items())[:5])
-    print("Gradient Variances (sample):", list(gradient_variances.items())[:5])
-    print("Hardware Scores (sample):", list(hardware_scores.items())[:5])
-    print("Network Scores (sample):", list(network_scores.items())[:5])
-    print("Losses (sample):", list(losses.items())[:5])
-    print("Client Num Samples (sample):", list(client_num_samples.items())[:5])    
-
-    print("Length of client_ids:", len(client_ids))
-    print("Length of gradient_magnitudes:", len(gradient_magnitudes))
-    print("Length of gradient_variances:", len(gradient_variances))
-    print("Length of client_num_samples:", len(client_num_samples))
-    print("Length of losses:", len(losses))
-
-
     # Initial status
     print('--- Random Initialization ---')
     stat_writer_fn = get_stat_writer_function(client_ids, client_groups, client_num_samples, args)
@@ -153,10 +122,8 @@ def main():
     print_stats(0, server, clients, client_num_samples, args, stat_writer_fn, args.use_val_set)
 
     client_clusters = run_hdbscan_clustering(gradient_magnitudes, gradient_variances, hardware_scores, network_scores, losses, client_num_samples)
-    # client_ids = list(client_clusters.keys())
-    cluster_labels = np.array(list(client_clusters.values()))
-
-    baseline_ranges = set_baseline_ranges(client_clusters, gradient_magnitudes, gradient_variances, args.num_epochs)
+    # Step 2: Apply Cluster-Wide Isolation Forest Scoring
+    isolation_models = apply_isolation_forest_scoring(client_clusters, gradient_magnitudes, gradient_variances)
 
     test_accuracies = []
     test_losses = []
@@ -174,15 +141,11 @@ def main():
     for i in range(num_rounds):
         print('--- Round %d of %d: Training %d Clients ---' % (i + 1, num_rounds, clients_per_round))
 
-        # if (i % 5 == 0) or i == 0:  # Select clients at the start and then every 5 rounds
         server.selected_clients = select_clients(selection_strategy, i, clients, client_num_samples, costs, hardware_scores, network_scores, data_quality_scores, losses, clients_per_round, budget=budget)
 
-        c_ids, c_groups, c_num_samples, c_hardware_scores, c_network_scores, c_data_quality_scores, c_costs, c_losses, c_grad, c_var = server.get_clients_info(server.selected_clients)
+        c_ids, c_groups, c_num_samples, c_hardware_scores, c_network_scores, c_data_quality_scores, c_costs, c_losses, _, _ = server.get_clients_info(server.selected_clients)
 
         print("===========Client info=============")
-        # print("selected client IDs", c_ids)
-        # print("c_num_samples", c_num_samples)
-        # print("c_losses", c_losses)
 
         no_selected_clients = (len(server.selected_clients))
         print("no_selected_clients", no_selected_clients)
@@ -199,34 +162,22 @@ def main():
         sys_metrics, gradient_magnitudes, gradient_variances, download_time, estimated_training_time, upload_time = server.train_model(num_epochs=args.num_epochs, batch_size=args.batch_size, minibatch=args.minibatch, simulate_delays=True)
         sys_writer_fn(i + 1, c_ids, sys_metrics, c_groups, c_num_samples)
 
-        # # Anomaly Detection and Validation BEFORE Aggregation
-        # valid_clients = []
+        # Step 4: Anomaly Detection with Isolation Forest before Aggregation
+        valid_clients = check_for_anomalies(c_ids, client_clusters, gradient_magnitudes, gradient_variances, isolation_models)
+        # lof_valid_clients = []
         # for client_id, grad_mag in gradient_magnitudes.items():
-        #     cluster_id = client_clusters[client_id]
-        #     grad_var = gradient_variances[client_id]
-            
-        #     # Skip if client was flagged as an outlier cluster
-        #     if cluster_id == -1:
-        #         continue
-            
-        #     # Retrieve baseline ranges for this cluster
-        #     baseline = baseline_ranges[cluster_id]
-        #     within_baseline = (
-        #         baseline['magnitude_range'][0] <= grad_mag <= baseline['magnitude_range'][1] and
-        #         baseline['variance_range'][0] <= grad_var <= baseline['variance_range'][1]
-        #     )
+        #     data_for_lof = [[gradient_magnitudes[cid], gradient_variances[cid]] for cid in c_ids]
+        #     scaler = StandardScaler()
+        #     scaled_data = scaler.fit_transform(data_for_lof)
+        #     lof = LocalOutlierFactor(n_neighbors=5, contamination=0.01, leaf_size=30)
+        #     lof_labels = lof.fit_predict(scaled_data)
+        #     is_outlier = lof_labels[c_ids.index(client_id)] == -1
+        #     print(f"client{client_id} is flagged as anomaly by lof")
+        #     if valid_clients and not is_outlier:
+        #         lof_valid_clients.append(client_id)
 
-            # # Detect outliers using LOF
-            # data_for_lof = [[gradient_magnitudes[cid], gradient_variances[cid]] for cid in c_ids]
-            # lof = LocalOutlierFactor(n_neighbors=5, contamination=0.1)
-            # lof_labels = lof.fit_predict(data_for_lof)
-            # is_outlier = lof_labels[c_ids.index(client_id)] == -1
-
-            # Add to valid_clients if within baseline and not an LOF outlier
-            # if within_baseline:
-            #     valid_clients.append(client_id)
-            # else:
-            #     print(f"Client {client_id} flagged as anomalous and excluded from aggregation")
+        print(f"Valid clients for aggregation in Round {i + 1}:", valid_clients)
+        print(f"number of valid clients in Round {i + 1}:", len(valid_clients))
         
         # Update server model
         server.update_model()

@@ -26,7 +26,7 @@ def batch_data(data, batch_size, seed):
         batched_y = data_y[i:i+batch_size]
         yield (batched_x, batched_y)
 
-def read_dir(data_dir, introduce_mislabeled=False, mislabel_rate=0.0):
+def read_dir(data_dir):
     clients = []
     groups = []
     data = defaultdict(lambda: None)
@@ -40,25 +40,6 @@ def read_dir(data_dir, introduce_mislabeled=False, mislabel_rate=0.0):
         clients.extend(cdata['users'])
         if 'hierarchies' in cdata:
             groups.extend(cdata['hierarchies'])
-        
-        # # If the flag is set, introduce mislabeled data
-        # if introduce_mislabeled:
-        #     for user in cdata['users']:
-        #         labels = cdata['user_data'][user]['y']
-        #         num_samples = len(labels)
-        #         num_mislabeled = int(mislabel_rate * num_samples)
-
-        #         mislabel_indices = np.random.choice(range(num_samples), size=num_mislabeled, replace=False)
-        #         for idx in mislabel_indices:
-        #             original_label = labels[idx]
-        #             # Assuming labels are integers and there are 62 classes (0-61)
-        #             # new_label = np.random.choice([l for l in range(62) if l != original_label])
-        #             # for celeba
-        #             new_label = (original_label + 1) % 2
-
-        #             labels[idx] = new_label
-
-        #         cdata['user_data'][user]['y'] = labels
 
         data.update(cdata['user_data'])
 
@@ -80,7 +61,7 @@ def read_data(train_data_dir, test_data_dir):
         train_data: dictionary of train data
         test_data: dictionary of test data
     '''
-    train_clients, train_groups, train_data = read_dir(train_data_dir, introduce_mislabeled=False, mislabel_rate=0.0)
+    train_clients, train_groups, train_data = read_dir(train_data_dir)
     test_clients, test_groups, test_data = read_dir(test_data_dir)
 
     assert train_clients == test_clients
