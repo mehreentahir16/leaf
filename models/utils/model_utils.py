@@ -4,6 +4,8 @@ import os
 from collections import defaultdict
 import tensorflow as tf
 
+from utils.args import label_flipping_config
+
 
 def batch_data(data, batch_size, seed):
     '''
@@ -97,3 +99,9 @@ def get_update_size(update):
     """
     total_size = sum(array.nbytes for array in update)
     return total_size
+
+def get_label_flipping_config(dataset_name):
+    config = label_flipping_config.get(dataset_name.lower())
+    if config is None:
+        raise ValueError(f"No label flipping configuration found for dataset: {dataset_name}")
+    return config

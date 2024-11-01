@@ -16,7 +16,7 @@ from server import Server
 from model import ServerModel
 
 from utils.args import parse_args
-from utils.model_utils import read_data
+from utils.model_utils import read_data, get_label_flipping_config
 from client_selection_protocols import select_clients_randomly, select_clients_greedy, select_clients_price_based, client_selection_active, client_selection_pow_d, select_clients_resource_based, promethee_selection
 
 from clustering import run_hdbscan_clustering, set_baseline_ranges
@@ -115,6 +115,13 @@ def main():
     client_ids, client_groups, client_num_samples, hardware_scores, network_scores, data_quality_scores, costs, losses, gradient_magnitudes, gradient_variances = server.get_clients_info(clients)
     print('Clients in Total: %d' % len(clients))
 
+    label_flip_config = get_label_flipping_config(args.dataset)
+    # Set malicious clients based on the specified fraction
+    num_malicious_clients = int(args.malicious_fraction * len(clients))
+    malicious_clients = random.sample(clients, num_malicious_clients)
+    for client in malicious_clients:
+        client.is_malicious = True  # Mark the client as malicious
+
     # Initial status
     print('--- Random Initialization ---')
     stat_writer_fn = get_stat_writer_function(client_ids, client_groups, client_num_samples, args)
@@ -142,20 +149,24 @@ def main():
         print('--- Round %d of %d: Training %d Clients ---' % (i + 1, num_rounds, clients_per_round))
 
         server.selected_clients = select_clients(selection_strategy, i, clients, client_num_samples, costs, hardware_scores, network_scores, data_quality_scores, losses, clients_per_round, budget=budget)
+        for client in server.selected_clients:
+            if client.is_malicious:  # Condition when client becomes malicious
+                client.flip_labels(label_flip_config)
+                print(f"Malicious client {client.id} in Round ", i)
 
         c_ids, c_groups, c_num_samples, c_hardware_scores, c_network_scores, c_data_quality_scores, c_costs, c_losses, _, _ = server.get_clients_info(server.selected_clients)
 
         print("===========Client info=============")
 
-        no_selected_clients = (len(server.selected_clients))
-        print("no_selected_clients", no_selected_clients)
-        avg_num_samples = sum(c_num_samples.values())/no_selected_clients
-        print("avg_num_samples", avg_num_samples)
-        new_clients = {client_id: samples for client_id, samples in c_num_samples.items() if client_id not in unique_client_ids}
-        total_unique_samples += sum(new_clients.values())
-        unique_client_ids.update(new_clients.keys())  # Update the set of unique client IDs
+        # no_selected_clients = (len(server.selected_clients))
+        # print("no_selected_clients", no_selected_clients)
+        # avg_num_samples = sum(c_num_samples.values())/no_selected_clients
+        # print("avg_num_samples", avg_num_samples)
+        # new_clients = {client_id: samples for client_id, samples in c_num_samples.items() if client_id not in unique_client_ids}
+        # total_unique_samples += sum(new_clients.values())
+        # unique_client_ids.update(new_clients.keys())  # Update the set of unique client IDs
 
-        print(f"Total unique training samples so far: {total_unique_samples}")
+        # print(f"Total unique training samples so far: {total_unique_samples}")
 
 
         # Simulate server model training on selected clients' data
@@ -164,17 +175,25 @@ def main():
 
         # Step 4: Anomaly Detection with Isolation Forest before Aggregation
         valid_clients = check_for_anomalies(c_ids, client_clusters, gradient_magnitudes, gradient_variances, isolation_models)
-        # lof_valid_clients = []
+        anomalous_clients = [client for client in server.selected_clients if client.id not in valid_clients]
+
+        # for client in anomalous_clients:
+        #     print(f"Client {client.id} flagged as anomalous.")
+        #     print(f"Number of samples for client {client.id}: {c_num_samples[client.id]}")
+        # for client in server.selected_clients:
+        #     if client not in valid_clients:
+        #         print(f"client {client.id} was flagged. It has {len(client.train_data)} data points.")
+        # lof = []
         # for client_id, grad_mag in gradient_magnitudes.items():
         #     data_for_lof = [[gradient_magnitudes[cid], gradient_variances[cid]] for cid in c_ids]
         #     scaler = StandardScaler()
         #     scaled_data = scaler.fit_transform(data_for_lof)
-        #     lof = LocalOutlierFactor(n_neighbors=5, contamination=0.01, leaf_size=30)
+        #     lof = LocalOutlierFactor(n_neighbors=3, contamination=0.01, leaf_size=30)
         #     lof_labels = lof.fit_predict(scaled_data)
         #     is_outlier = lof_labels[c_ids.index(client_id)] == -1
         #     print(f"client{client_id} is flagged as anomaly by lof")
-        #     if valid_clients and not is_outlier:
-        #         lof_valid_clients.append(client_id)
+        #     if anomalous_clients and is_outlier:
+        #         print(f"client {client_id} was flgged by both Isolation forest and LOF")
 
         print(f"Valid clients for aggregation in Round {i + 1}:", valid_clients)
         print(f"number of valid clients in Round {i + 1}:", len(valid_clients))
@@ -212,8 +231,8 @@ def main():
         "training_time": total_training_time,
         "time_to_reach_accuracy_thresholds": accuracy_thresholds,
         "number_of_clients": no_selected_clients,  
-        "avg_number_of_samples": avg_num_samples,
-        "total_unique_training_samples": total_unique_samples
+        # "avg_number_of_samples": avg_num_samples,
+        # "total_unique_training_samples": total_unique_samples
     }
 
     file_name = f"results/data_{args.dataset}_selection_{args.client_selection_strategy}_clients_{args.clients_per_round}_budget_{budget}_results_test.pkl"

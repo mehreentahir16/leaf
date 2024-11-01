@@ -1,6 +1,6 @@
 import numpy as np
 import hdbscan
-from sklearn.preprocessing import StandardScaler
+from sklearn.preprocessing import RobustScaler
 import pandas as pd
 import matplotlib.pyplot as plt
 from sklearn.metrics import pairwise_distances
@@ -122,7 +122,7 @@ def run_hdbscan_clustering(gradient_magnitudes, gradient_variances, hardware_sco
     })
 
     # Standardize features before clustering
-    scaler = StandardScaler()
+    scaler = RobustScaler()
     scaled_features = scaler.fit_transform(features)
 
     # Apply HDBSCAN on the scaled feature set directly

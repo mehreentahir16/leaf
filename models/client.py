@@ -13,6 +13,7 @@ class Client:
         self.group = group
         self.train_data = train_data
         self.eval_data = eval_data
+        self.is_malicious = False
         self.hardware_config = self.assign_hardware()
         self.network_config = self.assign_network()
 
@@ -117,6 +118,21 @@ class Client:
         
         num_train_samples = len(data['y'])
         return comp, num_train_samples, update, download_time, training_time, upload_time, grad_magnitude, grad_variance
+    
+    def flip_labels(self, config):
+        flip_fraction = config['flip_fraction']
+        target_labels = config['target_labels']
+        flip_pairs = config['flip_pairs']
+        
+        num_labels = len(self.train_data['y'])
+        labels_to_flip = random.sample(
+            [i for i, label in enumerate(self.train_data['y']) if label in target_labels],
+            int(flip_fraction * num_labels)
+        )
+        
+        for idx in labels_to_flip:
+            original_label = self.train_data['y'][idx]
+            self.train_data['y'][idx] = flip_pairs.get(original_label, original_label)
 
     def test(self, set_to_use='test'):
         """Tests self.model on self.test_data.
