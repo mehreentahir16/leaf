@@ -1,5 +1,6 @@
 """Script to run the baselines."""
 import time
+import joblib
 import importlib
 import numpy as np
 import os
@@ -7,6 +8,9 @@ import sys
 import random
 import pickle
 import tensorflow as tf
+tf.logging.set_verbosity(tf.logging.ERROR)
+from sklearn.preprocessing import StandardScaler 
+tf.compat.v1.logging.set_verbosity(tf.compat.v1.logging.ERROR)
 
 import metrics.writer as metrics_writer
 
@@ -19,10 +23,13 @@ from utils.args import parse_args
 from utils.model_utils import read_data, get_label_flipping_config
 from client_selection_protocols import select_clients_randomly, select_clients_greedy, select_clients_price_based, client_selection_active, client_selection_pow_d, select_clients_resource_based, promethee_selection
 
-from clustering import run_hdbscan_clustering, set_baseline_ranges
+from PCA import flatten_model_updates, perform_incremental_pca
+from autoencoder import Autoencoder
+from clustering import run_hdbscan_clustering
 from isolationforest import apply_isolation_forest_scoring, check_for_anomalies
-from sklearn.neighbors import LocalOutlierFactor
-from sklearn.preprocessing import StandardScaler
+
+import warnings
+warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 STAT_METRICS_PATH = 'metrics/stat_metrics.csv'
 SYS_METRICS_PATH = 'metrics/sys_metrics.csv'
@@ -112,8 +119,71 @@ def main():
 
     # Create clients
     clients = setup_clients(args.dataset, client_model, args.use_val_set)
-    client_ids, client_groups, client_num_samples, hardware_scores, network_scores, data_quality_scores, costs, losses, gradient_magnitudes, gradient_variances = server.get_clients_info(clients)
+    client_ids, client_groups, client_num_samples, hardware_scores, network_scores, data_quality_scores, costs, losses, gradient_magnitudes, gradient_variances, update_weights = server.get_clients_info(clients)
+
+    flattened_updates = flatten_model_updates(update_weights)
+    print(f"Shape of flattened updates: {flattened_updates.shape}")
+
+    pca_transformed, ipca, scaler = perform_incremental_pca(flattened_updates, n_components=25, batch_size=29)
+
+    # Scale the PCA-transformed output
+    second_scaler = StandardScaler()
+    pca_transformed_scaled = second_scaler.fit_transform(pca_transformed)
+    joblib.dump(second_scaler, 'second_scaler.pkl')
+
+    print("Scaled PCA-Transformed Data Statistics:")
+    print(f"Mean: {np.mean(pca_transformed_scaled, axis=0)}")
+    print(f"Std Dev: {np.std(pca_transformed_scaled, axis=0)}")
+    print(f"Min: {np.min(pca_transformed_scaled, axis=0)}")
+    print(f"Max: {np.max(pca_transformed_scaled, axis=0)}")
+
+    # print(f"Number of principal components (input_dim) for the Autoencoder: {input_dim}")
+    bottleneck_dim = 16  # Example value
+    learning_rate = 0.001
+    num_epochs = 50
+    batch_size = 64  # As you've set
+
+    autoencoder = Autoencoder(input_dim=pca_transformed_scaled.shape[1], bottleneck_dim=bottleneck_dim, learning_rate=learning_rate)
+
+    # Train Autoencoder
+    with tf.Session() as sess:
+        sess.run(tf.global_variables_initializer())
+        
+        print("Starting Autoencoder Training...")
+        autoencoder.train(sess, pca_transformed_scaled, num_epochs=num_epochs, batch_size=batch_size)
+        
+        # Save the trained Autoencoder model
+        saver = tf.train.Saver()
+        saver.save(sess, 'autoencoder_model/autoencoder.ckpt')
+        print("Autoencoder model saved successfully.")
+
+        # Calculate mean and standard deviation of reconstruction errors from training
+        training_errors = []
+        num_samples = pca_transformed_scaled.shape[0]
+        # Loop over data in smaller batches for error computation
+        for i in range(0, num_samples, 16):
+            batch_data = pca_transformed_scaled[i:i + 16]
+            errors = autoencoder.compute_reconstruction_error(sess, batch_data)
+            training_errors.extend(errors)
+        if training_errors:
+            mean_error = np.mean(training_errors)
+            std_error = np.std(training_errors)
+
+            print("mean error:", mean_error)
+            print("std error:", std_error)
+        else:
+            print("no training_errors found")
+
+        # anomaly_threshold = mean_error + 3 * std_error 
+    
     print('Clients in Total: %d' % len(clients))
+
+    # Initial status
+    print('--- Random Initialization ---')
+    stat_writer_fn = get_stat_writer_function(client_ids, client_groups, client_num_samples, args)
+    sys_writer_fn = get_sys_writer_function(args)
+    print_stats(0, server, clients, client_num_samples, args, stat_writer_fn, args.use_val_set)
+
 
     label_flip_config = get_label_flipping_config(args.dataset)
     # Set malicious clients based on the specified fraction
@@ -122,16 +192,6 @@ def main():
     for client in malicious_clients:
         client.is_malicious = True  # Mark the client as malicious
 
-    # Initial status
-    print('--- Random Initialization ---')
-    stat_writer_fn = get_stat_writer_function(client_ids, client_groups, client_num_samples, args)
-    sys_writer_fn = get_sys_writer_function(args)
-    print_stats(0, server, clients, client_num_samples, args, stat_writer_fn, args.use_val_set)
-
-    client_clusters = run_hdbscan_clustering(gradient_magnitudes, gradient_variances, hardware_scores, network_scores, losses, client_num_samples)
-    # Step 2: Apply Cluster-Wide Isolation Forest Scoring
-    isolation_models = apply_isolation_forest_scoring(client_clusters, gradient_magnitudes, gradient_variances)
-
     test_accuracies = []
     test_losses = []
     training_time = {}
@@ -139,81 +199,101 @@ def main():
 
     # Define accuracy thresholds and initialize time tracking for each
     accuracy_thresholds = {50: None, 60: None, 70: None, 80: None, 90: None}
- 
+
     total_training_time = 0
     total_unique_samples = 0
     unique_client_ids = set()
 
-    # Simulate training
-    for i in range(num_rounds):
-        print('--- Round %d of %d: Training %d Clients ---' % (i + 1, num_rounds, clients_per_round))
+    # Load once outside the main training loop
+    with tf.Session() as sess:
+        saver.restore(sess, 'autoencoder_model/autoencoder.ckpt')
+        print("Autoencoder model loaded successfully.")
 
-        server.selected_clients = select_clients(selection_strategy, i, clients, client_num_samples, costs, hardware_scores, network_scores, data_quality_scores, losses, clients_per_round, budget=budget)
-        for client in server.selected_clients:
-            if client.is_malicious:  # Condition when client becomes malicious
-                client.flip_labels(label_flip_config)
-                print(f"Malicious client {client.id} in Round ", i)
+        scaler = joblib.load('scaler.pkl')
+        pca = joblib.load('pca.pkl')
 
-        c_ids, c_groups, c_num_samples, c_hardware_scores, c_network_scores, c_data_quality_scores, c_costs, c_losses, _, _ = server.get_clients_info(server.selected_clients)
+        # Simulate training
+        for i in range(num_rounds):
+            print('--- Round %d of %d: Training %d Clients ---' % (i + 1, num_rounds, clients_per_round))
 
-        print("===========Client info=============")
+            server.selected_clients = select_clients(selection_strategy, i, clients, client_num_samples, costs, hardware_scores, network_scores, data_quality_scores, losses, clients_per_round, budget=budget)
+            for client in server.selected_clients:
+                if client.is_malicious:  # Condition when client becomes malicious
+                    if args.attack == 'label_flip':
+                        client.flip_labels(label_flip_config)
+                        print(f"Malicious client {client.id} in Round {i} performing label flipping.")
+                    # elif args.attack_type == 'random_noise':
+                    #     client.add_noise(random_noise_config['noise_level'])
+                    #     print(f"Malicious client {client.id} in Round {i} adding random noise.")
 
-        # no_selected_clients = (len(server.selected_clients))
-        # print("no_selected_clients", no_selected_clients)
-        # avg_num_samples = sum(c_num_samples.values())/no_selected_clients
-        # print("avg_num_samples", avg_num_samples)
-        # new_clients = {client_id: samples for client_id, samples in c_num_samples.items() if client_id not in unique_client_ids}
-        # total_unique_samples += sum(new_clients.values())
-        # unique_client_ids.update(new_clients.keys())  # Update the set of unique client IDs
+            c_ids, c_groups, c_num_samples, c_hardware_scores, c_network_scores, c_data_quality_scores, c_costs, c_losses, _, _, _ = server.get_clients_info(server.selected_clients)
 
-        # print(f"Total unique training samples so far: {total_unique_samples}")
+            print("===========Client info=============")
 
+            # no_selected_clients = (len(server.selected_clients))
+            # print("no_selected_clients", no_selected_clients)
+            # avg_num_samples = sum(c_num_samples.values())/no_selected_clients
+            # print("avg_num_samples", avg_num_samples)
+            # new_clients = {client_id: samples for client_id, samples in c_num_samples.items() if client_id not in unique_client_ids}
+            # total_unique_samples += sum(new_clients.values())
+            # unique_client_ids.update(new_clients.keys())  # Update the set of unique client IDs
 
-        # Simulate server model training on selected clients' data
-        sys_metrics, gradient_magnitudes, gradient_variances, download_time, estimated_training_time, upload_time = server.train_model(num_epochs=args.num_epochs, batch_size=args.batch_size, minibatch=args.minibatch, simulate_delays=True)
-        sys_writer_fn(i + 1, c_ids, sys_metrics, c_groups, c_num_samples)
+            # print(f"Total unique training samples so far: {total_unique_samples}")
 
-        # Step 4: Anomaly Detection with Isolation Forest before Aggregation
-        valid_clients = check_for_anomalies(c_ids, client_clusters, gradient_magnitudes, gradient_variances, isolation_models)
-        anomalous_clients = [client for client in server.selected_clients if client.id not in valid_clients]
+            # Simulate server model training on selected clients' data
+            sys_metrics, gradient_magnitudes, gradient_variances, update_weights, download_time, estimated_training_time, upload_time = server.train_model(num_epochs=args.num_epochs, batch_size=args.batch_size, minibatch=args.minibatch, simulate_delays=True)
+            sys_writer_fn(i + 1, c_ids, sys_metrics, c_groups, c_num_samples)
 
-        # for client in anomalous_clients:
-        #     print(f"Client {client.id} flagged as anomalous.")
-        #     print(f"Number of samples for client {client.id}: {c_num_samples[client.id]}")
-        # for client in server.selected_clients:
-        #     if client not in valid_clients:
-        #         print(f"client {client.id} was flagged. It has {len(client.train_data)} data points.")
-        # lof = []
-        # for client_id, grad_mag in gradient_magnitudes.items():
-        #     data_for_lof = [[gradient_magnitudes[cid], gradient_variances[cid]] for cid in c_ids]
-        #     scaler = StandardScaler()
-        #     scaled_data = scaler.fit_transform(data_for_lof)
-        #     lof = LocalOutlierFactor(n_neighbors=3, contamination=0.01, leaf_size=30)
-        #     lof_labels = lof.fit_predict(scaled_data)
-        #     is_outlier = lof_labels[c_ids.index(client_id)] == -1
-        #     print(f"client{client_id} is flagged as anomaly by lof")
-        #     if anomalous_clients and is_outlier:
-        #         print(f"client {client_id} was flgged by both Isolation forest and LOF")
+            # Flatten, scale, and transform updates
+            flattened_updates = flatten_model_updates(update_weights)
+            flattened_updates_scaled = scaler.transform(flattened_updates)
+            pca_transformed_updates = pca.transform(flattened_updates_scaled)
+            pca_transformed_scaled_updates = second_scaler.transform(pca_transformed_updates)
 
-        print(f"Valid clients for aggregation in Round {i + 1}:", valid_clients)
-        print(f"number of valid clients in Round {i + 1}:", len(valid_clients))
-        
-        # Update server model
-        server.update_model()
+            # Run anomaly detection on PCA-transformed updates after training
+            reconstruction_errors = []
+            flagged_clients = []  # To track flagged clients
+            
+            # Compute reconstruction errors for all clients
+            for idx, update in enumerate(pca_transformed_scaled_updates):
+                update_reshaped = update.reshape(1, -1)
+                error = autoencoder.compute_reconstruction_error(sess, update_reshaped)
+                reconstruction_errors.append(error[0])  # error is an array with one element
 
-        simulated_total_time = download_time + estimated_training_time + upload_time 
-        print("simulated total time", simulated_total_time)
-        training_time[i] = simulated_total_time
-        total_training_time += simulated_total_time
+            # Now that reconstruction_errors is populated, compute the anomaly threshold
+            anomaly_threshold = np.percentile(reconstruction_errors, 90)
 
-        # Test model
-        if (i + 1) % eval_every == 0 or (i + 1) == num_rounds:
-            current_accuracy, current_loss = print_stats(i + 1, server, clients, client_num_samples, args, stat_writer_fn, args.use_val_set)
-            test_accuracies.append(current_accuracy)
-            test_losses.append(current_loss)
-            for threshold in accuracy_thresholds.keys():
-                if current_accuracy >= threshold and accuracy_thresholds[threshold] is None:
-                    accuracy_thresholds[threshold] = total_training_time 
+            # Identify clients with reconstruction errors above the threshold
+            for idx, error in enumerate(reconstruction_errors):
+                if error > anomaly_threshold:
+                    flagged_clients.append(server.selected_clients[idx].id)
+
+            print("Reconstruction errors:", reconstruction_errors)
+            print("Anomaly threshold:", anomaly_threshold)
+            print("Anomalous clients flagged:", flagged_clients)
+
+            
+            # # Identify and flag anomalies based on reconstruction errors
+            # non_anomalous_clients = [
+            #     client for idx, client in enumerate(server.selected_clients)
+            #     if reconstruction_errors[idx] <= anomaly_threshold
+            # ]
+            # Update server model
+            server.update_model()
+
+            simulated_total_time = download_time + estimated_training_time + upload_time 
+            print("simulated total time", simulated_total_time)
+            training_time[i] = simulated_total_time
+            total_training_time += simulated_total_time
+
+            # Test model
+            if (i + 1) % eval_every == 0 or (i + 1) == num_rounds:
+                current_accuracy, current_loss = print_stats(i + 1, server, clients, client_num_samples, args, stat_writer_fn, args.use_val_set)
+                test_accuracies.append(current_accuracy)
+                test_losses.append(current_loss)
+                for threshold in accuracy_thresholds.keys():
+                    if current_accuracy >= threshold and accuracy_thresholds[threshold] is None:
+                        accuracy_thresholds[threshold] = total_training_time 
 
     print("Model training time: ", total_training_time)
     

@@ -4,6 +4,7 @@ import argparse
 DATASETS = ['sent140', 'femnist', 'shakespeare', 'celeba', 'synthetic', 'reddit']
 SIM_TIMES = ['small', 'medium', 'large']
 CLIENT_SELECTION_STRATEGIES = ['random', 'greedy', 'price_based', 'resource_based', 'active', 'pow-d', 'promethee']  
+ATTACKS=['label-flip', 'random-noise']
 
 def generate_random_flip_pairs(num_labels):
     labels = list(range(num_labels))
@@ -21,7 +22,7 @@ def generate_random_flip_pairs(num_labels):
 
 label_flipping_config = {
     'femnist': {
-        'flip_fraction': 0.3,
+        'flip_fraction':0.5,
         'target_labels': list(range(62)),  # Representing all classes
         'flip_pairs': generate_random_flip_pairs(62)
     },
@@ -33,7 +34,7 @@ label_flipping_config = {
     'synthetic': {
         'flip_fraction': 0.3,
         'target_labels': list(range(5)),  # Assuming a 10-class synthetic dataset
-        'flip_pairs': generate_random_flip_pairs(10)
+        'flip_pairs': generate_random_flip_pairs(5)
     },
     # Add other datasets as needed
 }
@@ -70,11 +71,16 @@ def parse_args():
     parser.add_argument('--malicious-fraction',
                     help='Fraction of clients that are malicious (for testing purposes)',
                     type=float,
-                    default=0.1)
+                    default=0.3)
+    parser.add_argument('--attack',
+                    help="Type of attack to simulate",
+                    type=str, 
+                    choices=ATTACKS,
+                    default='label_flip')
     parser.add_argument('--batch-size',
                     help='batch size when clients train on data;',
                     type=int,
-                    default=5)
+                    default=10)
     parser.add_argument('--seed',
                     help='seed for random client sampling and batch splitting',
                     type=int,
@@ -102,7 +108,7 @@ def parse_args():
     epoch_capability_group.add_argument('--num-epochs',
                     help='number of epochs when clients train on data;',
                     type=int,
-                    default=2)
+                    default=5)
 
     parser.add_argument('-t',
                     help='simulation time: small, medium, or large;',

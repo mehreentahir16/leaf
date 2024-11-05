@@ -105,3 +105,15 @@ def get_label_flipping_config(dataset_name):
     if config is None:
         raise ValueError(f"No label flipping configuration found for dataset: {dataset_name}")
     return config
+
+def flip_labels(client_data):
+    """
+    Flip labels of '8' to '3' in the client's training data.
+
+    Args:
+        client_data (dict): A dictionary containing the training data with keys:
+                            - 'x': List of input samples
+                            - 'y': List of labels corresponding to input samples
+    """
+    # Modify labels in-place
+    client_data['y'] = [3 if label == 8 else label for label in client_data['y']]

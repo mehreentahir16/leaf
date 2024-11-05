@@ -161,7 +161,7 @@ if (args.user):
 
     max_users = sys.maxsize
     if args.name == 'femnist':
-        max_users = 50 # max number of users per json file
+        max_users = 100 # max number of users per json file
     create_jsons_for(train_user_files, 'train', max_users, include_hierarchy)
     create_jsons_for(test_user_files, 'test', max_users, include_hierarchy)
 

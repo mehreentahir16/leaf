@@ -15,3 +15,8 @@ _templates/
 autodoc/
 data/
 models/hdbscan
+models/autoencoder_model
+pca.pkl
+scaler.pkl
+second_scaler.pkl
+standard_scaler.pkl

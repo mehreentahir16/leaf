@@ -112,7 +112,7 @@ def hybrid_distance_metric(X, Y=None):
 
 #     return final_clusters
 
-def run_hdbscan_clustering(gradient_magnitudes, gradient_variances, hardware_scores, network_scores, losses, client_num_samples):
+def run_hdbscan_clustering(gradient_magnitudes, gradient_variances, losses, client_num_samples):
     # Create initial DataFrame with all relevant features
     client_ids = list(gradient_magnitudes.keys())
     features = pd.DataFrame({
@@ -189,41 +189,41 @@ def run_hdbscan_clustering(gradient_magnitudes, gradient_variances, hardware_sco
     return client_clusters
 
 
-def set_baseline_ranges(client_clusters, gradient_magnitudes, gradient_variances, num_epochs, adjustment_factor=1.5):
-    print("num epochs:", num_epochs)
-    baseline_ranges = {}
-    for cluster_id in np.unique(list(client_clusters.values())):
-        if cluster_id == -1:  # Skip outliers
-            continue
-        cluster_clients = [c_id for c_id, c in client_clusters.items() if c == cluster_id]
-        magnitudes = np.array([gradient_magnitudes[c_id] for c_id in cluster_clients])
-        variances = np.array([gradient_variances[c_id] for c_id in cluster_clients])
+# def set_baseline_ranges(client_clusters, gradient_magnitudes, gradient_variances, num_epochs, adjustment_factor=1.5):
+#     print("num epochs:", num_epochs)
+#     baseline_ranges = {}
+#     for cluster_id in np.unique(list(client_clusters.values())):
+#         if cluster_id == -1:  # Skip outliers
+#             continue
+#         cluster_clients = [c_id for c_id, c in client_clusters.items() if c == cluster_id]
+#         magnitudes = np.array([gradient_magnitudes[c_id] for c_id in cluster_clients])
+#         variances = np.array([gradient_variances[c_id] for c_id in cluster_clients])
 
-        # Calculate mean and standard deviation
-        mean_magnitude = np.mean(magnitudes)
-        std_magnitude = np.std(magnitudes)
-        mean_variance = np.mean(variances)
-        std_variance = np.std(variances)
+#         # Calculate mean and standard deviation
+#         mean_magnitude = np.mean(magnitudes)
+#         std_magnitude = np.std(magnitudes)
+#         mean_variance = np.mean(variances)
+#         std_variance = np.std(variances)
 
-        # Define range with standard deviations for more flexibility
-        magnitude_range = (
-            mean_magnitude - 3 * std_magnitude,
-            mean_magnitude + 3 * std_magnitude
-        )
-        variance_range = (
-            mean_variance - 3 * std_variance,
-            mean_variance + 3 * std_variance
-        )
+#         # Define range with standard deviations for more flexibility
+#         magnitude_range = (
+#             mean_magnitude - 3 * std_magnitude,
+#             mean_magnitude + 3 * std_magnitude
+#         )
+#         variance_range = (
+#             mean_variance - 3 * std_variance,
+#             mean_variance + 3 * std_variance
+#         )
 
-        # Apply an epoch adjustment factor if applicable
-        if num_epochs > 1:
-            magnitude_range = (magnitude_range[0] * adjustment_factor, magnitude_range[1] * adjustment_factor)
-            variance_range = (variance_range[0] * adjustment_factor, variance_range[1] * adjustment_factor)
+#         # Apply an epoch adjustment factor if applicable
+#         if num_epochs > 1:
+#             magnitude_range = (magnitude_range[0] * adjustment_factor, magnitude_range[1] * adjustment_factor)
+#             variance_range = (variance_range[0] * adjustment_factor, variance_range[1] * adjustment_factor)
 
-        baseline_ranges[cluster_id] = {
-            'magnitude_range': magnitude_range,
-            'variance_range': variance_range
-        }
+#         baseline_ranges[cluster_id] = {
+#             'magnitude_range': magnitude_range,
+#             'variance_range': variance_range
+#         }
 
-    print("baseline ranges", baseline_ranges)
-    return baseline_ranges
+#     print("baseline ranges", baseline_ranges)
+#     return baseline_ranges
