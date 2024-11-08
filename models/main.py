@@ -11,6 +11,7 @@ import tensorflow as tf
 tf.logging.set_verbosity(tf.logging.ERROR)
 from sklearn.preprocessing import StandardScaler 
 tf.compat.v1.logging.set_verbosity(tf.compat.v1.logging.ERROR)
+import gc
 
 import metrics.writer as metrics_writer
 
@@ -18,15 +19,17 @@ from baseline_constants import MAIN_PARAMS, MODEL_PARAMS
 from client import Client
 from server import Server
 from model import ServerModel
+from client_selection import select_clients
 
 from utils.args import parse_args
-from utils.model_utils import read_data, get_label_flipping_config
-from client_selection_protocols import select_clients_randomly, select_clients_greedy, select_clients_price_based, client_selection_active, client_selection_pow_d, select_clients_resource_based, promethee_selection
+from utils.model_utils import read_data, get_label_flipping_config, add_gaussian_noise, rotate_data, shift_features, augment_data
 
-from PCA import flatten_model_updates, perform_incremental_pca
-from autoencoder import Autoencoder
-from clustering import run_hdbscan_clustering
-from isolationforest import apply_isolation_forest_scoring, check_for_anomalies
+
+from PCA import get_layerwise_updates, apply_pca
+from autoencoder import LayerWiseAutoencoder
+
+from sklearn.decomposition import PCA
+
 
 import warnings
 warnings.filterwarnings("ignore", category=DeprecationWarning)
@@ -34,46 +37,7 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 STAT_METRICS_PATH = 'metrics/stat_metrics.csv'
 SYS_METRICS_PATH = 'metrics/sys_metrics.csv'
 
-def select_clients(strategy, round_number, clients, client_num_samples, costs, hardware_scores, network_scores, 
-                   data_quality_scores, losses, num_clients, budget=None):
-    """Selects clients based on the given strategy, now including client_num_samples.
 
-    Args:
-        strategy (str): The client selection strategy.
-        round_number (int): The current training round.
-        clients (list): The list of client objects.
-        client_num_samples (dict): The dictionary mapping client ids to their number of samples.
-        costs (dict): The dictionary mapping client ids to their costs.
-        hardware_scores (dict): Client hardware scores.
-        network_scores (dict): Client network scores.
-        data_quality_scores (dict): Client data quality scores.
-        losses (dict): Client losses.
-        num_clients (int): Number of clients to select.
-        budget (optional): The budget for client selection. Defaults to None.
-
-    Returns:
-        list: The list of selected client objects.
-    """
-    if strategy == 'random': 
-        selected_clients = select_clients_randomly(round_number, clients, costs, num_clients=num_clients, budget=budget)
-    elif strategy == 'greedy': 
-        selected_clients = select_clients_greedy(clients, costs, num_clients=num_clients, budget=budget)
-    elif strategy == 'price_based':
-        selected_clients = select_clients_price_based(clients, costs, num_clients=num_clients, budget=budget)
-    elif strategy == 'resource_based':
-        selected_clients = select_clients_resource_based(clients, hardware_scores, network_scores, costs, num_clients=num_clients, budget=budget)
-    elif strategy == 'active':
-        selected_clients = client_selection_active(clients, losses, costs, alpha1=0.75, alpha2=0.01, alpha3=0.1, num_clients=num_clients, budget=budget)
-    elif strategy == 'pow-d':
-        selected_clients = client_selection_pow_d(clients, client_num_samples, losses, costs, d=50, num_clients=num_clients, budget=budget)
-    elif strategy == 'promethee':
-        weights = np.array([0.1, 0.2, 0.7])
-        selected_clients = promethee_selection(round_number, clients=clients, hardware_scores=hardware_scores, network_scores=network_scores, 
-                                                data_quality_scores=data_quality_scores, weights=weights, costs=costs, num_clients=num_clients, budget=budget)
-    else:
-        raise ValueError("Invalid client selection strategy.")
-
-    return selected_clients
 
 def main():
 
@@ -121,60 +85,103 @@ def main():
     clients = setup_clients(args.dataset, client_model, args.use_val_set)
     client_ids, client_groups, client_num_samples, hardware_scores, network_scores, data_quality_scores, costs, losses, gradient_magnitudes, gradient_variances, update_weights = server.get_clients_info(clients)
 
-    flattened_updates = flatten_model_updates(update_weights)
-    print(f"Shape of flattened updates: {flattened_updates.shape}")
+    layer_updates = get_layerwise_updates(update_weights)
+    print(f"Number of layers: {len(layer_updates)}")
+    for idx, layer_data in enumerate(layer_updates):
+        print(f"Shape of updates for layer {idx}: {layer_data.shape}")
 
-    pca_transformed, ipca, scaler = perform_incremental_pca(flattened_updates, n_components=25, batch_size=29)
+    layer_scalers = []
+    normalized_layer_updates = []
 
     # Scale the PCA-transformed output
-    second_scaler = StandardScaler()
-    pca_transformed_scaled = second_scaler.fit_transform(pca_transformed)
-    joblib.dump(second_scaler, 'second_scaler.pkl')
+    for idx, layer_data in enumerate(layer_updates):
+        scaler = StandardScaler()
+        normalized_data = scaler.fit_transform(layer_data)
+        normalized_layer_updates.append(normalized_data)
+        layer_scalers.append(scaler)
+        # Save the scaler for this layer
+        joblib.dump(scaler, f'scaler_layer_{idx}.pkl')
 
-    print("Scaled PCA-Transformed Data Statistics:")
-    print(f"Mean: {np.mean(pca_transformed_scaled, axis=0)}")
-    print(f"Std Dev: {np.std(pca_transformed_scaled, axis=0)}")
-    print(f"Min: {np.min(pca_transformed_scaled, axis=0)}")
-    print(f"Max: {np.max(pca_transformed_scaled, axis=0)}")
+    variance_retained = 0.95  # Adjust as needed
+    pca_models = []
+    reduced_layer_updates = []
+    updated_layer_dims = []
 
-    # print(f"Number of principal components (input_dim) for the Autoencoder: {input_dim}")
-    bottleneck_dim = 16  # Example value
+    for idx, layer_data in enumerate(normalized_layer_updates):
+        reduced_data, n_components, pca_model = apply_pca(idx, layer_data, desired_variance=variance_retained)
+        
+        # Append results
+        reduced_layer_updates.append(reduced_data)
+        updated_layer_dims.append(n_components)
+        pca_models.append(pca_model)
+        
+        # Free memory
+        del layer_data, reduced_data, pca_model
+        gc.collect()
+
+    augmented_layer_updates = augment_data(reduced_layer_updates)
+    # Set bottleneck dimensions dynamically
+    compression_factor = 4
+    bottleneck_dims = [max(1, dim // compression_factor) for dim in updated_layer_dims]
+
     learning_rate = 0.001
     num_epochs = 50
-    batch_size = 64  # As you've set
+    batch_size = 32  # As you've set
 
-    autoencoder = Autoencoder(input_dim=pca_transformed_scaled.shape[1], bottleneck_dim=bottleneck_dim, learning_rate=learning_rate)
+    # original_data = pca_transformed_scaled
+
+    # # Augment data using multiple strategies
+    # augmented_data_gaussian = augment_with_gaussian_noise(original_data, noise_level=0.01, n_augmented=1)
+    # augmented_data_scaling = augment_with_scaling(original_data, scale_range=(0.98, 1.02), n_augmented=1)
+    # augmented_data_interpolation = augment_with_interpolation(original_data, n_augmented=len(original_data))
+    # augmented_data_smote = augment_with_smote(original_data, n_neighbors=5, n_augmented=2)
+
+    # # Combine all data
+    # augmented_data = np.vstack((original_data))
+
+    # print("augmented data length", len(augmented_data))
+
+    # from sklearn.utils import shuffle
+
+    # augmented_data = shuffle(augmented_data, random_state=42)
+
+    autoencoder = LayerWiseAutoencoder(updated_layer_dims, bottleneck_dims, learning_rate=learning_rate)
 
     # Train Autoencoder
     with tf.Session() as sess:
         sess.run(tf.global_variables_initializer())
         
         print("Starting Autoencoder Training...")
-        autoencoder.train(sess, pca_transformed_scaled, num_epochs=num_epochs, batch_size=batch_size)
+        autoencoder.train(sess, augmented_layer_updates, num_epochs=num_epochs, batch_size=batch_size)
         
         # Save the trained Autoencoder model
         saver = tf.train.Saver()
         saver.save(sess, 'autoencoder_model/autoencoder.ckpt')
-        print("Autoencoder model saved successfully.")
+        print("LayerWiseAutoencoder model saved successfully.")
 
-        # Calculate mean and standard deviation of reconstruction errors from training
-        training_errors = []
-        num_samples = pca_transformed_scaled.shape[0]
-        # Loop over data in smaller batches for error computation
-        for i in range(0, num_samples, 16):
-            batch_data = pca_transformed_scaled[i:i + 16]
-            errors = autoencoder.compute_reconstruction_error(sess, batch_data)
-            training_errors.extend(errors)
-        if training_errors:
-            mean_error = np.mean(training_errors)
-            std_error = np.std(training_errors)
+        # Compute training errors per layer
+        training_errors_per_layer = autoencoder.compute_layer_errors(sess, reduced_layer_updates)
+        # Save mean and std of errors per layer for thresholding
+        layer_error_means = []
+        layer_error_stds = []
+        for idx, layer_errors in enumerate(training_errors_per_layer):
+            mean_error = np.mean(layer_errors)
+            std_error = np.std(layer_errors)
+            layer_error_means.append(mean_error)
+            layer_error_stds.append(std_error)
+            print(f"Layer {idx} error mean: {mean_error}, std: {std_error}")
+        # avg_val_loss = cross_validate_autoencoder(
+        #     X_data=pca_transformed_scaled,
+        #     bottleneck_dim=3,
+        #     learning_rate=0.001,
+        #     num_epochs=100,
+        #     batch_size=32,
+        #     K=5
+        # )
 
-            print("mean error:", mean_error)
-            print("std error:", std_error)
-        else:
-            print("no training_errors found")
+        # print("avg loss in validation", avg_val_loss)
 
-        # anomaly_threshold = mean_error + 3 * std_error 
+        # anomaly_threshold = np.percentile(training_errors, 90) 
     
     print('Clients in Total: %d' % len(clients))
 
@@ -209,8 +216,11 @@ def main():
         saver.restore(sess, 'autoencoder_model/autoencoder.ckpt')
         print("Autoencoder model loaded successfully.")
 
-        scaler = joblib.load('scaler.pkl')
-        pca = joblib.load('pca.pkl')
+        # Load scalers for each layer
+        pca_models = []
+        for idx in range(len(updated_layer_dims)):
+            pca = joblib.load(f'memmaps/pca_layer_{idx}.pkl')
+            pca_models.append(pca)
 
         # Simulate training
         for i in range(num_rounds):
@@ -245,32 +255,63 @@ def main():
             sys_writer_fn(i + 1, c_ids, sys_metrics, c_groups, c_num_samples)
 
             # Flatten, scale, and transform updates
-            flattened_updates = flatten_model_updates(update_weights)
-            flattened_updates_scaled = scaler.transform(flattened_updates)
-            pca_transformed_updates = pca.transform(flattened_updates_scaled)
-            pca_transformed_scaled_updates = second_scaler.transform(pca_transformed_updates)
+            layer_updates_inference = get_layerwise_updates(update_weights)
+            # Normalize the updates per layer using the saved scalers
+            normalized_layer_updates_inference = []
+            for idx, layer_data in enumerate(layer_updates_inference):
+                scaler = layer_scalers[idx]
+                normalized_data = scaler.transform(layer_data)
+                normalized_layer_updates_inference.append(normalized_data)
 
-            # Run anomaly detection on PCA-transformed updates after training
-            reconstruction_errors = []
-            flagged_clients = []  # To track flagged clients
-            
-            # Compute reconstruction errors for all clients
-            for idx, update in enumerate(pca_transformed_scaled_updates):
-                update_reshaped = update.reshape(1, -1)
-                error = autoencoder.compute_reconstruction_error(sess, update_reshaped)
-                reconstruction_errors.append(error[0])  # error is an array with one element
+            # Apply PCA to each layer
+            reduced_layer_updates_inference = []
+            for idx, layer_data in enumerate(normalized_layer_updates_inference):
+                pca = pca_models[idx]
+                reduced_data = pca.transform(layer_data)
+                reduced_layer_updates_inference.append(reduced_data)
 
-            # Now that reconstruction_errors is populated, compute the anomaly threshold
-            anomaly_threshold = np.percentile(reconstruction_errors, 90)
+            # Compute per-client reconstruction errors per layer
+            reconstruction_errors_per_layer = autoencoder.compute_layer_errors(sess, reduced_layer_updates_inference)
 
-            # Identify clients with reconstruction errors above the threshold
-            for idx, error in enumerate(reconstruction_errors):
+            # Aggregate errors per client
+            num_clients = len(server.selected_clients)
+            total_reconstruction_errors = np.zeros(num_clients)
+            for layer_errors in reconstruction_errors_per_layer:
+                total_reconstruction_errors += layer_errors  # Sum errors across layers
+
+            # Compute anomaly threshold based on training errors (e.g., 95th percentile)
+            anomaly_threshold = np.percentile(total_reconstruction_errors, 85)
+
+            # Identify anomalous clients
+            flagged_clients = []
+            for idx, error in enumerate(total_reconstruction_errors):
                 if error > anomaly_threshold:
                     flagged_clients.append(server.selected_clients[idx].id)
 
-            print("Reconstruction errors:", reconstruction_errors)
+            print("Total Reconstruction errors:", total_reconstruction_errors)
             print("Anomaly threshold:", anomaly_threshold)
             print("Anomalous clients flagged:", flagged_clients)
+
+            # Determine layer-wise thresholds
+            # layer_percentiles = [90] * len(reconstruction_errors_per_layer)  # Adjust as needed
+            # layer_thresholds = []
+            # for layer_idx, layer_errors in enumerate(reconstruction_errors_per_layer):
+            #     threshold = np.percentile(layer_errors, layer_percentiles[layer_idx])
+            #     layer_thresholds.append(threshold)
+            #     print(f"Layer {layer_idx} anomaly threshold (percentile {layer_percentiles[layer_idx]}): {threshold}")
+
+            # # Flag anomalous clients based on layer-wise thresholds
+            # flagged_clients = set()
+            # num_clients = len(server.selected_clients)
+            # for layer_idx, layer_errors in enumerate(reconstruction_errors_per_layer):
+            #     threshold = layer_thresholds[layer_idx]
+            #     for client_idx in range(num_clients):
+            #         if layer_errors[client_idx] > threshold:
+            #             print(f"flagging client {server.selected_clients[client_idx].id}")
+            #             flagged_clients.add(server.selected_clients[client_idx].id)
+
+            # flagged_clients = list(flagged_clients)
+            # print("Anomalous clients flagged (layer-wise):", flagged_clients)
 
             
             # # Identify and flag anomalies based on reconstruction errors

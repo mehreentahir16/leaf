@@ -3,6 +3,7 @@ import numpy as np
 import os
 from collections import defaultdict
 import tensorflow as tf
+from sklearn.neighbors import NearestNeighbors
 
 from utils.args import label_flipping_config
 
@@ -117,3 +118,63 @@ def flip_labels(client_data):
     """
     # Modify labels in-place
     client_data['y'] = [3 if label == 8 else label for label in client_data['y']]
+
+def add_gaussian_noise(data, mean=0, std=0.01):
+    noise = np.random.normal(mean, std, data.shape)
+    augmented_data = data + noise
+    return augmented_data
+
+# def apply_smote(data, sampling_strategy='auto', random_state=42):
+#     smote = SMOTE(sampling_strategy=sampling_strategy, random_state=random_state)
+#     augmented_data, _ = smote.fit_resample(data, np.zeros(data.shape[0]))  # Dummy labels
+#     return augmented_data
+
+def rotate_data(data, angle=15):
+    theta = np.radians(angle)
+    rotation_matrix = np.array([[np.cos(theta), -np.sin(theta)],
+                                [np.sin(theta),  np.cos(theta)]])
+    if data.shape[1] >= 2:
+        data_rotated = data.copy()
+        data_rotated[:, :2] = data[:, :2].dot(rotation_matrix)
+        return data_rotated
+    else:
+        return data
+
+def shift_features(data, shift_range=0.05):
+    shifts = np.random.uniform(-shift_range, shift_range, data.shape)
+    shifted_data = data + shifts
+    return shifted_data 
+
+def augment_data(reduced_layer_updates):
+    """
+    Applies augmentation techniques to PCA-reduced data.
+    
+    Parameters:
+    - reduced_layer_updates (list of np.ndarray): PCA-reduced data for each layer.
+    
+    Returns:
+    - augmented_layer_updates (list of np.ndarray): Original and augmented data.
+    """
+    augmented_layer_updates = []
+    
+    for layer_data in reduced_layer_updates:
+        # Original data
+        augmented_data = [layer_data]
+        
+        # Add Gaussian noise
+        noisy_data = add_gaussian_noise(layer_data, mean=0, std=0.01)
+        augmented_data.append(noisy_data)
+        
+        # Shift features
+        shifted_data = shift_features(layer_data, shift_range=0.05)
+        augmented_data.append(shifted_data)
+        
+        # Optionally apply rotation if applicable
+        rotated_data = rotate_data(layer_data, angle=15)
+        augmented_data.append(rotated_data)
+        
+        # Concatenate all augmented data
+        augmented_layer = np.vstack(augmented_data)
+        augmented_layer_updates.append(augmented_layer)
+    
+    return augmented_layer_updates

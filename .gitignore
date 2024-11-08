@@ -16,7 +16,16 @@ autodoc/
 data/
 models/hdbscan
 models/autoencoder_model
+models/memmaps
 pca.pkl
 scaler.pkl
 second_scaler.pkl
 standard_scaler.pkl
+scaler_layer_0.pkl
+scaler_layer_1.pkl
+scaler_layer_2.pkl
+scaler_layer_3.pkl
+scaler_layer_4.pkl
+scaler_layer_5.pkl
+scaler_layer_6.pkl
+scaler_layer_7.pkl

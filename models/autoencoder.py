@@ -1,96 +1,107 @@
 import tensorflow as tf
 
-class Autoencoder:
-    def __init__(self, input_dim, bottleneck_dim, learning_rate=0.001):
-        self.input_dim = input_dim
-        self.bottleneck_dim = bottleneck_dim
+class LayerWiseAutoencoder:
+    def __init__(self, layer_dims, bottleneck_dims, learning_rate=0.001):
+        """
+        :param layer_dims: List of input dimensions for each layer.
+        :param bottleneck_dims: List of bottleneck dimensions for each layer.
+        :param learning_rate: Learning rate for training.
+        """
+        self.layer_dims = layer_dims
+        self.bottleneck_dims = bottleneck_dims
         self.learning_rate = learning_rate
         self._build_model()
     
     def _build_model(self):
-        # Input placeholder
-        self.X = tf.placeholder(tf.float32, [None, self.input_dim], name='input')
-        
-        # Encoder
-        with tf.variable_scope('encoder'):
-            W_enc1 = tf.Variable(tf.truncated_normal([self.input_dim, 128], stddev=0.1), name='W_enc1')
-            b_enc1 = tf.Variable(tf.zeros([128]), name='b_enc1')
-            enc_layer1 = tf.nn.relu(tf.matmul(self.X, W_enc1) + b_enc1)
-            # enc_layer1 = tf.compat.v1.layers.batch_normalization(enc_layer1)
-            
-            # Bottleneck layer
-            W_bottleneck = tf.Variable(tf.truncated_normal([128, self.bottleneck_dim], stddev=0.1), name='W_bottleneck')
-            b_bottleneck = tf.Variable(tf.zeros([self.bottleneck_dim]), name='b_bottleneck')
-            self.encoded = tf.nn.relu(tf.matmul(enc_layer1, W_bottleneck) + b_bottleneck)
-            # self.encoded = tf.compat.v1.layers.batch_normalization(self.encoded)
-        
-        # Decoder
-        with tf.variable_scope('decoder'):
-            W_dec1 = tf.Variable(tf.truncated_normal([self.bottleneck_dim, 128], stddev=0.1), name='W_dec1')
-            b_dec1 = tf.Variable(tf.zeros([128]), name='b_dec1')
-            dec_layer1 = tf.nn.relu(tf.matmul(self.encoded, W_dec1) + b_dec1)
-            # dec_layer1 = tf.compat.v1.layers.batch_normalization(dec_layer1)
-            
-            # Output layer
-            W_dec_out = tf.Variable(tf.truncated_normal([128, self.input_dim], stddev=0.1), name='W_dec_out')
-            b_dec_out = tf.Variable(tf.zeros([self.input_dim]), name='b_dec_out')
-            self.decoded = tf.matmul(dec_layer1, W_dec_out) + b_dec_out  # Linear output
-            
-        # Loss and optimizer
-        with tf.variable_scope('loss'):
-            reconstruction_loss = tf.reduce_mean(tf.square(self.decoded - self.X))
-            l2_regularizer = tf.contrib.layers.l2_regularizer(scale=0.001)
-            regularization_penalty = tf.contrib.layers.apply_regularization(l2_regularizer, tf.trainable_variables())
-            self.loss = reconstruction_loss + regularization_penalty
-            self.optimizer = tf.compat.v1.train.AdamOptimizer(self.learning_rate).minimize(self.loss)
-    
+        self.inputs = []
+        self.reconstructed_outputs = []
+        self.reconstruction_losses = []
+        self.total_loss = 0
+
+        # Separate encoder-decoder for each layer
+        for idx, (layer_dim, bottleneck_dim) in enumerate(zip(self.layer_dims, self.bottleneck_dims)):
+            # Input placeholder for this layer
+            layer_input = tf.placeholder(tf.float32, [None, layer_dim], name=f'input_layer_{idx}')
+            self.inputs.append(layer_input)
+
+            # Encoder for this layer
+            W_enc = tf.Variable(tf.truncated_normal([layer_dim, bottleneck_dim], stddev=0.1), name=f'W_enc_{idx}')
+            b_enc = tf.Variable(tf.zeros([bottleneck_dim]), name=f'b_enc_{idx}')
+            encoded = tf.nn.relu(tf.matmul(layer_input, W_enc) + b_enc)
+
+            # Decoder for this layer
+            W_dec = tf.Variable(tf.truncated_normal([bottleneck_dim, layer_dim], stddev=0.1), name=f'W_dec_{idx}')
+            b_dec = tf.Variable(tf.zeros([layer_dim]), name=f'b_dec_{idx}')
+            decoded = tf.matmul(encoded, W_dec) + b_dec
+
+            # Reconstruction loss for this layer
+            reconstruction_loss = tf.reduce_mean(tf.square(decoded - layer_input))
+            self.reconstruction_losses.append(reconstruction_loss)
+
+            # Add reconstruction loss to total loss
+            self.total_loss += reconstruction_loss
+
+            # Store reconstructed output
+            self.reconstructed_outputs.append(decoded)
+
+        # Add regularization
+        l2_regularizer = tf.contrib.layers.l2_regularizer(scale=0.001)
+        regularization_penalty = tf.contrib.layers.apply_regularization(l2_regularizer, tf.trainable_variables())
+        self.total_loss += regularization_penalty
+
+        self.optimizer = tf.train.AdamOptimizer(self.learning_rate).minimize(self.total_loss)
+
     def train(self, sess, X_train, num_epochs=50, batch_size=64):
-        num_samples = X_train.shape[0]
-        num_batches = num_samples // batch_size
+        num_samples = X_train[0].shape[0]
+        num_batches = max(1, num_samples // batch_size)
         for epoch in range(num_epochs):
             avg_loss = 0
-            for i in range(num_batches):
-                batch_x = X_train[i * batch_size : (i + 1) * batch_size]
-                feed_dict = {self.X: batch_x}
-                _, l = sess.run([self.optimizer, self.loss], feed_dict=feed_dict)
-                avg_loss += l / num_batches
-            print(f'Epoch [{epoch + 1}/{num_epochs}], Loss: {avg_loss:.4f}')
-    
-    def compute_reconstruction_error(self, sess, X_data):
-        feed_dict = {self.X: X_data}
-        # Return per-sample reconstruction errors
-        return sess.run(tf.reduce_mean(tf.square(self.decoded - self.X), axis=1), feed_dict=feed_dict)
+            for batch_idx in range(num_batches):
+                feed_dict = {}
+                for i, layer_data in enumerate(X_train):
+                    batch_data = layer_data[batch_idx * batch_size:(batch_idx + 1) * batch_size]
+                    feed_dict[self.inputs[i]] = batch_data
+                _, loss = sess.run([self.optimizer, self.total_loss], feed_dict=feed_dict)
+                avg_loss += loss / num_batches
+            print(f'Epoch [{epoch+1}/{num_epochs}], Total Loss: {avg_loss:.6f}')
 
-class VariationalAutoencoder:
-    def __init__(self, input_dim, latent_dim, learning_rate=0.001):
-        self.input_dim = input_dim
-        self.latent_dim = latent_dim
-        self.learning_rate = learning_rate
-        self._build_model()
+    def compute_layer_errors(self, sess, X_data):
+        """Compute reconstruction errors for each layer per sample."""
+        layer_errors = []
+        for i, layer_data in enumerate(X_data):
+            feed_dict = {self.inputs[i]: layer_data}
+            # Compute per-sample reconstruction errors for this layer
+            errors = sess.run(tf.reduce_mean(tf.square(self.reconstructed_outputs[i] - self.inputs[i]), axis=1), feed_dict=feed_dict)
+            layer_errors.append(errors)
+        return layer_errors
+
+from sklearn.model_selection import KFold
+import numpy as np
+
+# def cross_validate_autoencoder(X_data, bottleneck_dim, learning_rate, num_epochs, batch_size, K=5):
+#     kf = KFold(n_splits=K, shuffle=True, random_state=42)
+#     fold = 1
+#     validation_losses = []
+    
+#     for train_index, val_index in kf.split(X_data):
+#         print(f'Fold {fold}')
+#         X_train, X_val = X_data[train_index], X_data[val_index]
         
-    def _build_model(self):
-        self.X = tf.placeholder(tf.float32, [None, self.input_dim])
-        
-        # Encoder
-        with tf.variable_scope('encoder'):
-            h_enc = tf.layers.dense(self.X, 128, activation=tf.nn.relu)
-            self.mu = tf.layers.dense(h_enc, self.latent_dim)
-            self.log_var = tf.layers.dense(h_enc, self.latent_dim)
+#         # Create a new graph for each fold
+#         graph = tf.Graph()
+#         with graph.as_default():
+#             autoencoder = Autoencoder(input_dim=X_data.shape[1], bottleneck_dim=bottleneck_dim, learning_rate=learning_rate)
             
-            # Reparameterization trick
-            eps = tf.random_normal(tf.shape(self.mu))
-            self.z = self.mu + tf.exp(0.5 * self.log_var) * eps
+#             with tf.Session(graph=graph) as sess:
+#                 sess.run(tf.global_variables_initializer())
+#                 autoencoder.train(sess, X_train, num_epochs=num_epochs, batch_size=batch_size)
+#                 # Compute validation loss
+#                 val_loss = sess.run(autoencoder.loss, feed_dict={autoencoder.X: X_val})
+#                 print(f'Validation Loss for fold {fold}: {val_loss:.6f}')
+#                 validation_losses.append(val_loss)
         
-        # Decoder
-        with tf.variable_scope('decoder'):
-            h_dec = tf.layers.dense(self.z, 128, activation=tf.nn.relu)
-            self.decoded = tf.layers.dense(h_dec, self.input_dim)
-        
-        # Loss
-        with tf.variable_scope('loss'):
-            # Reconstruction loss (could use binary_crossentropy if data is normalized between 0 and 1)
-            recon_loss = tf.reduce_mean(tf.square(self.decoded - self.X))
-            # KL divergence
-            kl_loss = -0.5 * tf.reduce_mean(1 + self.log_var - tf.square(self.mu) - tf.exp(self.log_var))
-            self.loss = recon_loss + kl_loss
-            self.optimizer = tf.train.AdamOptimizer(self.learning_rate).minimize(self.loss)
+#         fold += 1
+    
+#     avg_val_loss = np.mean(validation_losses)
+#     print(f'Average Validation Loss: {avg_val_loss:.6f}')
+#     return avg_val_loss
