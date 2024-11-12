@@ -17,38 +17,46 @@ class LayerWiseAutoencoder:
         self.reconstructed_outputs = []
         self.reconstruction_losses = []
         self.total_loss = 0
-
-        # Separate encoder-decoder for each layer
+        self.encoder_vars = []
+        self.decoder_vars = []
+        
         for idx, (layer_dim, bottleneck_dim) in enumerate(zip(self.layer_dims, self.bottleneck_dims)):
-            # Input placeholder for this layer
-            layer_input = tf.placeholder(tf.float32, [None, layer_dim], name=f'input_layer_{idx}')
-            self.inputs.append(layer_input)
-
-            # Encoder for this layer
-            W_enc = tf.Variable(tf.truncated_normal([layer_dim, bottleneck_dim], stddev=0.1), name=f'W_enc_{idx}')
-            b_enc = tf.Variable(tf.zeros([bottleneck_dim]), name=f'b_enc_{idx}')
-            encoded = tf.nn.relu(tf.matmul(layer_input, W_enc) + b_enc)
-
-            # Decoder for this layer
-            W_dec = tf.Variable(tf.truncated_normal([bottleneck_dim, layer_dim], stddev=0.1), name=f'W_dec_{idx}')
-            b_dec = tf.Variable(tf.zeros([layer_dim]), name=f'b_dec_{idx}')
-            decoded = tf.matmul(encoded, W_dec) + b_dec
-
-            # Reconstruction loss for this layer
-            reconstruction_loss = tf.reduce_mean(tf.square(decoded - layer_input))
-            self.reconstruction_losses.append(reconstruction_loss)
-
-            # Add reconstruction loss to total loss
-            self.total_loss += reconstruction_loss
-
-            # Store reconstructed output
-            self.reconstructed_outputs.append(decoded)
-
-        # Add regularization
+            with tf.variable_scope(f'autoencoder_layer_{idx}'):
+                layer_input = tf.placeholder(tf.float32, [None, layer_dim], name=f'input_layer_{idx}')
+                self.inputs.append(layer_input)
+                
+                # Encoder
+                W_enc = tf.get_variable('W_enc', shape=[layer_dim, bottleneck_dim],
+                                        initializer=tf.contrib.layers.xavier_initializer())
+                b_enc = tf.get_variable('b_enc', shape=[bottleneck_dim],
+                                        initializer=tf.zeros_initializer())
+                encoded = tf.nn.relu(tf.matmul(layer_input, W_enc) + b_enc)
+                self.encoder_vars.extend([W_enc, b_enc])
+                
+                # Decoder with residual connections
+                W_dec = tf.get_variable('W_dec', shape=[bottleneck_dim, layer_dim],
+                                        initializer=tf.contrib.layers.xavier_initializer())
+                b_dec = tf.get_variable('b_dec', shape=[layer_dim],
+                                        initializer=tf.zeros_initializer())
+                decoded = tf.matmul(encoded, W_dec) + b_dec
+                self.decoder_vars.extend([W_dec, b_dec])
+                
+                # Reconstruction with skip connection
+                decoded = decoded + layer_input  # Residual connection
+                
+                # Reconstruction loss
+                reconstruction_loss = tf.reduce_mean(tf.square(decoded - layer_input))
+                self.reconstruction_losses.append(reconstruction_loss)
+                self.total_loss += reconstruction_loss
+                
+                self.reconstructed_outputs.append(decoded)
+        
+        # Regularization
         l2_regularizer = tf.contrib.layers.l2_regularizer(scale=0.001)
-        regularization_penalty = tf.contrib.layers.apply_regularization(l2_regularizer, tf.trainable_variables())
+        regularization_penalty = tf.contrib.layers.apply_regularization(l2_regularizer, self.encoder_vars + self.decoder_vars)
         self.total_loss += regularization_penalty
-
+        
+        # Optimizer
         self.optimizer = tf.train.AdamOptimizer(self.learning_rate).minimize(self.total_loss)
 
     def train(self, sess, X_train, num_epochs=50, batch_size=64):

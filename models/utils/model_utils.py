@@ -1,9 +1,10 @@
 import json
+import joblib
 import numpy as np
 import os
 from collections import defaultdict
 import tensorflow as tf
-from sklearn.neighbors import NearestNeighbors
+from sklearn.preprocessing import StandardScaler 
 
 from utils.args import label_flipping_config
 
@@ -166,15 +167,72 @@ def augment_data(reduced_layer_updates):
         augmented_data.append(noisy_data)
         
         # Shift features
-        shifted_data = shift_features(layer_data, shift_range=0.05)
-        augmented_data.append(shifted_data)
+        # shifted_data = shift_features(layer_data, shift_range=0.05)
+        # augmented_data.append(shifted_data)
         
         # Optionally apply rotation if applicable
-        rotated_data = rotate_data(layer_data, angle=15)
-        augmented_data.append(rotated_data)
+        # rotated_data = rotate_data(layer_data, angle=15)
+        # augmented_data.append(rotated_data)
         
         # Concatenate all augmented data
         augmented_layer = np.vstack(augmented_data)
         augmented_layer_updates.append(augmented_layer)
     
     return augmented_layer_updates
+
+# Function to normalize updates for each layer
+def normalize_layer_updates(layer_updates):
+    """
+    Normalize layer updates using StandardScaler and save the scalers for future use.
+    
+    Parameters:
+    - layer_updates (list of np.ndarray): List where each element corresponds to a layer's updates.
+    
+    Returns:
+    - normalized_layer_updates (list of np.ndarray): List of normalized updates for each layer.
+    - scalers (list of StandardScaler): List of fitted scalers for each layer.
+    """
+    normalized_layer_updates = []
+    scalers = []
+    
+    for idx, layer_data in enumerate(layer_updates):
+        scaler = StandardScaler()
+        normalized_data = scaler.fit_transform(layer_data)
+        normalized_layer_updates.append(normalized_data)
+        scalers.append(scaler)
+        
+        # Save the scaler for this layer for later use
+        joblib.dump(scaler, f'scaler_layer_{idx}.pkl')
+        print(f"Scaler for layer {idx} saved at 'scaler_layer_{idx}.pkl'")
+    
+    return normalized_layer_updates, scalers
+
+# Function to normalize reduced updates before autoencoder
+def normalize_reduced_updates(reduced_layer_updates, reduced_scalers_dir='reduced_scalers'):
+    """
+    Normalize reduced layer updates using StandardScaler and save the scalers for future use.
+    
+    Parameters:
+    - reduced_layer_updates (list of np.ndarray): List where each element corresponds to a layer's reduced updates.
+    - reduced_scalers_dir (str): Directory to store scalers for reduced data.
+    
+    Returns:
+    - normalized_reduced_layer_updates (list of np.ndarray): List of normalized reduced updates for each layer.
+    - reduced_scalers (list of StandardScaler): List of fitted scalers for each layer.
+    """
+    normalized_reduced_layer_updates = []
+    reduced_scalers = []
+    
+    os.makedirs(reduced_scalers_dir, exist_ok=True)
+    
+    for idx, layer_data in enumerate(reduced_layer_updates):
+        scaler = StandardScaler()
+        normalized_data = scaler.fit_transform(layer_data)
+        normalized_reduced_layer_updates.append(normalized_data)
+        reduced_scalers.append(scaler)
+        
+        # Save the scaler for this layer
+        joblib.dump(scaler, f'{reduced_scalers_dir}/reduced_scaler_layer_{idx}.pkl')
+        print(f"Scaler for reduced layer {idx} saved at '{reduced_scalers_dir}/reduced_scaler_layer_{idx}.pkl'")
+    
+    return normalized_reduced_layer_updates

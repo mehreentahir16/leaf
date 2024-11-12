@@ -34,7 +34,7 @@ class Server:
                 sys_metrics[c.id][BYTES_READ_KEY] += c.model.size
                 sys_metrics[c.id][BYTES_WRITTEN_KEY] += c.model.size
                 sys_metrics[c.id][LOCAL_COMPUTATIONS_KEY] = comp
-                self.updates.append((num_samples, update))
+                self.updates.append((c.id, num_samples, update))
 
                 gradient_magnitudes[c.id] = grad_mag
                 gradient_variances[c.id] = grad_var
@@ -62,16 +62,27 @@ class Server:
 
         return sys_metrics, gradient_magnitudes, gradient_variances, update_weights, total_download_time, total_training_time, total_upload_time
 
-    def update_model(self):
+    def update_model(self, flagged_clients=None):
         total_weight = 0.
-        base = [0] * len(self.updates[0][1])
-        for (client_samples, client_model) in self.updates:
+        base = None
+        # base = [0] * len(self.updates[0][1])
+        for (client_id, client_samples, client_model) in self.updates:
+            if flagged_clients and client_id in flagged_clients:
+                print(f"Excluding flagged client {client_id} from aggregation.")
+                continue  # Skip flagged clients
+
+            if base is None:
+                base = [0] * len(client_model)
             total_weight += client_samples
             for i, v in enumerate(client_model):
                 base[i] += (client_samples * v.astype(np.float64))
-        averaged_soln = [v / total_weight for v in base]
+        if total_weight > 0 and base is not None:
+            averaged_soln = [v / total_weight for v in base]
+            self.model = averaged_soln
+            print("Model updated successfully with aggregated client updates.")
+        else:
+            print("No valid client updates to aggregate. Model remains unchanged.")
 
-        self.model = averaged_soln
         self.updates = []
 
     def test_model(self, clients_to_test, set_to_use='test'):

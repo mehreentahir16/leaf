@@ -71,7 +71,7 @@ def parse_args():
     parser.add_argument('--malicious-fraction',
                     help='Fraction of clients that are malicious (for testing purposes)',
                     type=float,
-                    default=0.3)
+                    default=0.2)
     parser.add_argument('--attack',
                     help="Type of attack to simulate",
                     type=str, 

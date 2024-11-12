@@ -26,55 +26,60 @@ def get_layerwise_updates(update_weights):
     layer_updates = [np.array(layer_list, dtype=np.float32) for layer_list in layer_updates]
     return layer_updates
 
+def train_ipca(layer_idx, layer_data, n_components, batch_size=40, pca_dir='pca_models'):
+    print(f"\nInitializing IncrementalPCA for layer {layer_idx} with n_components={n_components}")
 
-def perform_incremental_pca(flattened_updates, n_components=100, batch_size=100):
-    """
-    Performs Incremental PCA on the flattened updates.
-    
-    Parameters:
-    - flattened_updates (np.ndarray): The flattened client updates.
-    - n_components (int): Number of principal components to keep.
-    - batch_size (int): Number of samples per batch.
-    
-    Returns:
-    - pca_transformed (np.ndarray): The PCA-transformed data.
-    - pca (IncrementalPCA): The fitted Incremental PCA model.
-    - scaler (StandardScaler): The fitted scaler.
-    """
-    # Step 1: Normalize the Data
-    scaler = StandardScaler()
-    normalized_updates = scaler.fit_transform(flattened_updates)
-    joblib.dump(scaler, 'scaler.pkl')  # Save for future use
+    os.makedirs(pca_dir, exist_ok=True)
 
-    # Step 2: Initialize Incremental PCA
+    # Memory-map the layer data to handle large datasets
+    layer_data_memmap = np.memmap(f'memmap_layer_{layer_idx}.dat', dtype='float32', mode='w+', shape=layer_data.shape)
+    layer_data_memmap[:] = layer_data
+    del layer_data  # Free up memory for the original data
+
+    # Initialize IPCA
     ipca = IncrementalPCA(n_components=n_components, batch_size=batch_size)
-    
-    # Step 3: Fit Incremental PCA on Data in Batches
-    remaining_samples = None
-    for i in range(0, normalized_updates.shape[0], batch_size):
-        batch = normalized_updates[i:i+batch_size]
-        if batch.shape[0] < n_components:
-            # Combine the leftover samples with the previous batch if possible
-            if remaining_samples is not None:
-                batch = np.vstack((remaining_samples, batch))
-                remaining_samples = None
-            else:
-                remaining_samples = batch
-                continue  # Skip this incomplete batch for now
-        ipca.partial_fit(batch)
-        print(f"Processed batch {i//batch_size + 1}/{int(np.ceil(normalized_updates.shape[0]/batch_size))}")
-    
-    # Step 4: Transform the Entire Dataset
-    pca_transformed = ipca.transform(normalized_updates)
-    
-    # Save the Incremental PCA model
-    joblib.dump(ipca, 'pca.pkl')
-    
-    return pca_transformed, ipca, scaler
 
-def apply_pca(layer_idx, layer_data, desired_variance=0.95, memmap_dir='memmaps'):
+    # Fit IPCA in batches
+    num_samples = layer_data_memmap.shape[0]
+    for start in range(0, num_samples, batch_size):
+        end = start + batch_size
+        if end > num_samples:
+            break  # Skip last batch if fewer than n_components
+        batch = layer_data_memmap[start:end]
+        ipca.partial_fit(batch)
+        print(f"Layer {layer_idx}: IncrementalPCA fitted with batch {start} to {end}")
+        del batch  # Free memory after fitting each batch
+        gc.collect()
+
+    # Transform the data in batches
+    reduced_data = []
+    for start in range(0, num_samples, batch_size):
+        end = start + batch_size
+        if end > num_samples:
+            break  # Skip last batch if fewer than n_components
+        batch = layer_data_memmap[start:end]
+        reduced_batch = ipca.transform(batch)
+        reduced_data.append(reduced_batch)
+        del batch, reduced_batch  # Free memory after transforming each batch
+        gc.collect()
+
+    # Concatenate all reduced data batches into a single array
+    reduced_data = np.vstack(reduced_data)
+
+    # Save the IPCA model
+    ipca_path = os.path.join(pca_dir, f'ipca_layer_{layer_idx}.pkl')
+    joblib.dump(ipca, ipca_path)
+    print(f"Layer {layer_idx}: IncrementalPCA model trained and saved at {ipca_path}")
+
+    # Clean up memory
+    del layer_data_memmap
+    gc.collect()
+
+    return reduced_data, ipca
+
+def determine_n_components(layer_idx, layer_data, desired_variance=0.95, memmap_dir='memmaps'):
     """
-    Applies regular PCA to a given layer's data, utilizing memory mapping for large datasets.
+    Determines the number of PCA components for a given layer based on desired variance.
 
     Parameters:
     - layer_idx (int): Index of the layer.
