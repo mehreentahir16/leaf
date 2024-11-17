@@ -7,10 +7,7 @@ from utils.client_resource_utils import estimate_network_delay, estimate_trainin
 class Client:
     
     def __init__(self, client_id, group=None, train_data={'x' : [],'y' : []}, eval_data={'x' : [],'y' : []}, model=None):
-        numbers = re.findall(r'\d+', client_id)
-        result = ''.join(numbers)
-        result = int(result)
-        self.seed = np.random.seed(123+result)
+        self.seed = np.random.seed(123)
         self._model = model
         self.id = client_id
         self.group = group
@@ -52,7 +49,7 @@ class Client:
         }
         return random.choice(list(conditions.values()))
 
-    def train(self, num_epochs, batch_size, minibatch, global_params, simulate_delays=True):
+    def train(self, num_epochs, batch_size, minibatch, simulate_delays=True):
         """Trains on self.model using the client's train_data.
 
         Args:
@@ -70,9 +67,6 @@ class Client:
         training_time = 0
         upload_time = 0
 
-        elbo = None
-        variance = None
-
         if simulate_delays==True: 
             untrained_model_size = get_model_size(self._model.model)
             download_time = estimate_network_delay(untrained_model_size, self.network_config['Bandwidth'], self.network_config['Latency'])
@@ -80,7 +74,7 @@ class Client:
 
             if minibatch is None:
                 data = self.train_data
-                comp, update, elbo, variance = self.model.train(data, num_epochs, batch_size, global_params)
+                comp, update = self.model.train(data, num_epochs, batch_size)
             else:
                 frac = min(1.0, minibatch)
                 num_data = max(1, int(frac*len(self.train_data["x"])))
@@ -89,7 +83,7 @@ class Client:
 
                 # Minibatch trains for only 1 epoch - multiple local epochs don't make sense!
                 num_epochs = 1
-                comp, update, _, _ = self.model.train(data, num_epochs, num_data, global_params)
+                comp, update = self.model.train(data, num_epochs, num_data)
             
             training_time = estimate_training_time(comp, self.hardware_config['CPU Count']*self.hardware_config['Cores'], self.hardware_config['Frequency'], self.hardware_config['CPU Utilization'], self.hardware_config['RAM'], self.hardware_config['Available RAM'])
             update_size = get_update_size(update)
@@ -100,7 +94,7 @@ class Client:
 
             if minibatch is None:
                 data = self.train_data
-                comp, update, _, _ = self.model.train(data, num_epochs, batch_size, global_params)
+                comp, update = self.model.train(data, num_epochs, batch_size)
                 
             else:
                 frac = min(1.0, minibatch)
@@ -110,11 +104,11 @@ class Client:
 
                 # Minibatch trains for only 1 epoch - multiple local epochs don't make sense!
                 num_epochs = 1
-                comp, update, _, _ = self.model.train(data, num_epochs, num_data, global_params)
+                comp, update = self.model.train(data, num_epochs, num_data)
             
         
         num_train_samples = len(data['y'])
-        return comp, num_train_samples, update, elbo, variance, download_time, training_time, upload_time
+        return comp, num_train_samples, update, download_time, training_time, upload_time
 
     def test(self, set_to_use='test'):
         """Tests self.model on self.test_data.

@@ -8,10 +8,6 @@ class ClientModel(Model):
         self.num_classes = num_classes
         self.input_dim = input_dim
         super(ClientModel, self).__init__(seed, lr)
-        self.mean = [tf.Variable(tf.zeros_like(v)) for v in self.model.trainable_variables]
-        self.log_variance = [tf.Variable(tf.zeros_like(v)) for v in self.model.trainable_variables]
-        self.var_optimizer_mean = tf.keras.optimizers.Adam()
-        self.var_optimizer_log_variance = tf.keras.optimizers.Adam()
 
     def create_model(self):
         inputs = tf.keras.Input(shape=(self.input_dim,), name='features')
@@ -43,28 +39,11 @@ class ClientModel(Model):
 
                 with tf.GradientTape(persistent=True) as tape:
                     logits = self.model(input_data, training=True)
-                    loss = self.model.compiled_loss(target_data, logits)
-                    
-                    # Add KL divergence to the loss
-                    kl_divergence = 0
-                    for mean, log_var in zip(self.mean, self.log_variance):
-                        kl_divergence += tf.reduce_sum(-0.5 * (1 + log_var - tf.square(mean) - tf.exp(log_var)))
-                    loss += kl_divergence
-                    
-                    # # Proximal term for FedProx
-                    # if global_params is not None:
-                    #     prox_term = 0
-                    #     for w, w_global in zip(self.model.trainable_variables, global_params):
-                    #         prox_term += tf.reduce_sum(tf.square(w - w_global))
-                    #     loss += (mu / 2) * prox_term
-
+                    loss = self.model.loss(target_data, logits)
+                            
                 gradients = tape.gradient(loss, self.model.trainable_variables)
-                mean_gradients = tape.gradient(loss, self.mean)
-                log_variance_gradients = tape.gradient(loss, self.log_variance)
                 
                 self.optimizer.apply_gradients(zip(gradients, self.model.trainable_variables))
-                self.var_optimizer_mean.apply_gradients(zip(mean_gradients, self.mean))
-                self.var_optimizer_log_variance.apply_gradients(zip(log_variance_gradients, self.log_variance))
                 
                 epoch_loss += loss.numpy()
                 correct_predictions = tf.reduce_sum(tf.cast(tf.equal(tf.argmax(logits, axis=1), target_data), tf.float32))
@@ -75,34 +54,15 @@ class ClientModel(Model):
             epoch_accuracy /= num_batches * batch_size
             print(f"Epoch: {epoch + 1}, Loss = {epoch_loss}, Accuracy = {epoch_accuracy}")
 
-        elbo = self.calculate_elbo(data, batch_size)
-        return num_batches * batch_size, self.get_params(), elbo, [v.numpy() for v in self.log_variance]
 
-    def calculate_elbo(self, data, batch_size):
-        elbo_total = 0
-        for batched_x, batched_y in batch_data(data, batch_size, seed=self.seed):
-            input_data = self.process_x(batched_x)
-            target_data = self.process_y(batched_y)
-            elbo_total += self.elbo(input_data, target_data).numpy()
-        return elbo_total / (len(data['y']) / batch_size)
-
-    def elbo(self, input_data, target_data):
-        logits = self.model(input_data, training=False)
-        loss = self.model.compiled_loss(target_data, logits)
-        
-        kl_divergence = 0
-        for mean, log_var in zip(self.mean, self.log_variance):
-            kl_divergence += tf.reduce_sum(-0.5 * (1 + log_var - tf.square(mean) - tf.exp(log_var)))
-        
-        elbo = loss + kl_divergence
-        return elbo
+        return num_batches * batch_size, self.get_params()
 
     def test(self, data):
         x_vecs = self.process_x(data['x'])
         labels = self.process_y(data['y'])
 
         logits = self.model(x_vecs, training=False)
-        loss = self.model.compiled_loss(labels, logits)
+        loss = self.model.loss(labels, logits)
         tot_acc = tf.reduce_sum(tf.cast(tf.equal(tf.argmax(logits, axis=1), labels), tf.float32)).numpy()
 
         acc = float(tot_acc) / len(x_vecs)

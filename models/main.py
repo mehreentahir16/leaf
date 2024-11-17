@@ -18,7 +18,6 @@ from baseline_constants import MAIN_PARAMS, MODEL_PARAMS
 from client import Client
 from server import Server
 from model import ServerModel
-from plot_aggregation import plot_aggregation_behavior
 
 from utils.args import parse_args
 from utils.model_utils import read_data
@@ -185,7 +184,7 @@ def main():
     ckpt_path = os.path.join('checkpoints', args.dataset)
     if not os.path.exists(ckpt_path):
         os.makedirs(ckpt_path)
-    save_path = server.save_model(os.path.join(ckpt_path, '{}-fedprox.weights.h5'.format(args.model)))
+    save_path = server.save_model(os.path.join(ckpt_path, '{}.weights.h5'.format(args.model)))
     print('Model weights saved in path: %s' % save_path)
 
     # Saving results including training_time for each round
@@ -199,7 +198,7 @@ def main():
         "total_unique_training_samples": total_unique_samples
     }
 
-    file_name = f"results/data_{args.dataset}_selection_{args.client_selection_strategy}_clients_{args.clients_per_round}_batch{args.batch_size}_fedprox_results_simple.pkl"
+    file_name = f"results/data_{args.dataset}_selection_{args.client_selection_strategy}_clients_{args.clients_per_round}_batch{args.batch_size}_results.pkl"
 
     # Ensure the directory exists
     os.makedirs(os.path.dirname(file_name), exist_ok=True)
@@ -208,12 +207,6 @@ def main():
         pickle.dump(results, f)
 
     print(f'Results saved to {file_name}')
-
-    # # Save aggregated data
-    # save_aggregation_data(server)
-
-    # # Call the plot function after training
-    # plot_aggregation_behavior()
 
 
 def create_clients(users, groups, train_data, test_data, model):
@@ -305,15 +298,6 @@ def print_metrics(metrics, weights, prefix=''):
                  np.percentile(ordered_metric, 10),
                  np.percentile(ordered_metric, 50),
                  np.percentile(ordered_metric, 90)))
-        
-def save_aggregation_data(server, filename='aggregation_data.pkl'):
-    data = {
-        'means_history': server.aggregated_means_history,
-        'variances_history': server.aggregated_variances_history,
-    }
-    with open(filename, 'wb') as f:
-        pickle.dump(data, f)
-    print(f'Aggregation data saved to {filename}')
 
 
 if __name__ == '__main__':

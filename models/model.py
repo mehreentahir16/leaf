@@ -82,7 +82,7 @@ class Model(ABC):
             
             with tf.GradientTape() as tape:
                 logits = self.model(input_data, training=True)
-                loss = self.model.compiled_loss(target_data, logits)
+                loss = self.model.loss(target_data, logits)
             
             gradients = tape.gradient(loss, self.model.trainable_variables)
             self.optimizer.apply_gradients(zip(gradients, self.model.trainable_variables))

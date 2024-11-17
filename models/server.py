@@ -13,11 +13,6 @@ class Server:
         self.model = client_model.get_params()
         self.selected_clients = []
         self.updates = []
-        self.smoothing_factor = 0.1
-        self.previous_aggregated_mean = None
-        self.previous_aggregated_variance = None
-        self.aggregated_means_history = []
-        self.aggregated_variances_history = []
 
     def train_model(self, num_epochs, batch_size=10, minibatch=None, clients=None, simulate_delays=True):
         if clients is None:
@@ -31,23 +26,22 @@ class Server:
         download_times = []
         training_times = []
         upload_times = []
-        global_params = self.model
 
         def train_client(c):
             self.updates = []
             c.model.set_params(self.model)
-            comp, num_samples, update, elbo, variance, d_time, t_time, u_time = c.train(num_epochs, batch_size, minibatch, global_params, simulate_delays)
+            comp, num_samples, update, d_time, t_time, u_time = c.train(num_epochs, batch_size, minibatch, simulate_delays)
             with threading.Lock():
                 sys_metrics[c.id][BYTES_READ_KEY] += c.model.size
                 sys_metrics[c.id][BYTES_WRITTEN_KEY] += c.model.size
                 sys_metrics[c.id][LOCAL_COMPUTATIONS_KEY] = comp
-                self.updates.append((num_samples, update, elbo, variance))
+                self.updates.append((num_samples, update))
                 # Store times for each client
                 download_times.append(d_time)
                 training_times.append(t_time)
                 upload_times.append(u_time)
 
-         # Use ThreadPoolExecutor to limit the number of concurrent threads
+        # Use ThreadPoolExecutor to limit the number of concurrent threads
         with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
             futures = [executor.submit(train_client, c) for c in clients]
             for future in concurrent.futures.as_completed(futures):
@@ -60,155 +54,21 @@ class Server:
 
         return sys_metrics, total_download_time, total_training_time, total_upload_time
 
-    def update_model(self, method='fedprox'):
+    def update_model(self, method='fedavg'):
         if method == 'fedavg':
             self.aggregate_updates_fedavg()
-        elif method == 'fedprox':
-            self.aggregate_updates_fedprox()
-        elif method == 'fedma':
-            self.aggregate_updates_fedma()
-        elif method == 'fedopt':
-            self.aggregate_updates_fedopt()
-        elif method == 'bayesian':
-            self.aggregate_updates_bayesian()
-        elif method == 'hierarchical_bayesian':
-            self.aggregate_updates_hierarchical_bayesian()
 
     def aggregate_updates_fedavg(self):
         print("inside fedavg...")
         total_weight = 0.
         base = [np.zeros_like(v.numpy(), dtype=np.float32) for v in self.updates[0][1]]
-        for (client_samples, client_model, _, _) in self.updates:
+        for (client_samples, client_model) in self.updates:
             total_weight += client_samples
             for i, v in enumerate(client_model):
                 base[i] += (client_samples * v.numpy().astype(np.float32))
         averaged_soln = [v / total_weight for v in base]
 
         self.model = averaged_soln
-        self.updates = []
-
-    def aggregate_updates_fedprox(self):
-        print("inside fedprox...")
-        total_weight = 0.
-        base = [np.zeros_like(v.numpy(), dtype=np.float32) for v in self.updates[0][1]]
-        for (client_samples, client_model, _, _) in self.updates:
-            total_weight += client_samples
-            for i, v in enumerate(client_model):
-                base[i] += (client_samples * v.numpy().astype(np.float32))
-        averaged_soln = [v / total_weight for v in base]
-
-        self.model = averaged_soln
-        self.updates = []
-
-    def aggregate_updates_fedopt(self):
-        optimizer=tf.keras.optimizers.Adam()
-        print("Inside FedOpt aggregation...")
-        total_weight = 0.
-        base = [np.zeros_like(v.numpy(), dtype=np.float32) for v in self.updates[0][1]]
-        for (client_samples, client_model, _, _) in self.updates:
-            total_weight += client_samples
-            for i, v in enumerate(client_model):
-                base[i] += (client_samples * v.numpy().astype(np.float32))
-        averaged_soln = [v / total_weight for v in base]
-
-        grads_and_vars = [(tf.convert_to_tensor(v - variable.numpy(), dtype=tf.float32), variable) 
-                          for v, variable in zip(averaged_soln, self.model)]
-        optimizer.apply_gradients(grads_and_vars)
-
-        self.updates = []
-
-    def aggregate_updates_bayesian(self):
-        print("inside bayesian aggregation with regularization...")
-
-        total_weight = 0.
-        weighted_mean = [np.zeros_like(v.numpy(), dtype=np.float32) for v in self.updates[0][1]]
-        weighted_variance = [np.zeros_like(v, dtype=np.float32) for v in self.updates[0][3]]
-
-        regularization_term = 0.0019  # Regularization strength
-
-        for (num_samples, client_model, elbo, variance) in self.updates:
-            weight = elbo / np.mean(variance)
-            total_weight += weight
-            for i, (mean_update, var_update) in enumerate(zip(client_model, variance)):
-                weighted_mean[i] += weight * mean_update.numpy().astype(np.float32)
-                weighted_variance[i] += weight * var_update
-
-        aggregated_mean = [mean / total_weight for mean in weighted_mean]
-        aggregated_variance = [var / total_weight for var in weighted_variance]
-
-        for i, variable in enumerate(self.model):
-            update_value = aggregated_mean[i] - regularization_term * (variable.numpy() - aggregated_mean[i])
-            variable.assign(update_value)
-
-        self.updates = []
-
-
-    def aggregate_updates_hierarchical_bayesian(self):
-        print("inside hierarchical bayesian aggregation (with smoothing factor)...")
-
-        mean_updates = [update[1] for update in self.updates]
-        variance_updates = [update[3] for update in self.updates]
-
-        aggregated_mean = []
-        aggregated_variance = []
-
-        for i in range(len(mean_updates[0])):
-            inv_variances = [1.0 / (var[i] + 1e-8) for var in variance_updates]
-            total_inv_variance = np.sum(inv_variances)
-            normalized_weights = [inv_var / total_inv_variance for inv_var in inv_variances]
-
-            mean_sum = np.sum([normalized_weights[j] * mean_updates[j][i].numpy() for j in range(len(mean_updates))], axis=0)
-            variance_sum = np.sum([normalized_weights[j] * variance_updates[j][i] for j in range(len(variance_updates))], axis=0)
-
-            if self.previous_aggregated_mean is not None:
-                mean_sum = self.smoothing_factor * self.previous_aggregated_mean[i] + (1 - self.smoothing_factor) * mean_sum
-                variance_sum = self.smoothing_factor * self.previous_aggregated_variance[i] + (1 - self.smoothing_factor) * variance_sum
-
-            aggregated_mean.append(mean_sum)
-            aggregated_variance.append(variance_sum)
-
-        self.previous_aggregated_mean = aggregated_mean
-        self.previous_aggregated_variance = aggregated_variance
-
-        self.aggregated_means_history.append(aggregated_mean)
-        self.aggregated_variances_history.append(aggregated_variance)
-
-        regularization_term = 0.5
-
-        for i, variable in enumerate(self.model):
-            update_value = aggregated_mean[i] - regularization_term * (variable.numpy() - aggregated_mean[i])
-            variable.assign(update_value)
-
-        self.updates = []
-
-    def match_and_average(self, updates):
-        # Assuming updates is a list of model parameter updates from clients
-        num_clients = len(updates)
-        matched_params = []
-
-        # Iterate over each layer
-        for layer_idx in range(len(updates[0])):
-            # Collect parameters for this layer from each client
-            layer_params = [client[layer_idx].numpy() for client in updates]
-            
-            # Stack layer parameters for matching
-            stacked_params = np.stack(layer_params, axis=0)
-            
-            # Calculate the mean parameters for the layer
-            mean_params = np.mean(stacked_params, axis=0)
-            
-            matched_params.append(mean_params)
-
-        return matched_params
-
-    def aggregate_updates_fedma(self):
-        print("Inside FedMA aggregation...")
-        mean_updates = [update[1] for update in self.updates]
-        averaged_params = self.match_and_average(mean_updates)
-
-        for i, variable in enumerate(self.model):
-            variable.assign(averaged_params[i])
-
         self.updates = []
 
 
