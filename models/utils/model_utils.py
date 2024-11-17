@@ -167,8 +167,8 @@ def augment_data(reduced_layer_updates):
         augmented_data.append(noisy_data)
         
         # Shift features
-        # shifted_data = shift_features(layer_data, shift_range=0.05)
-        # augmented_data.append(shifted_data)
+        shifted_data = shift_features(layer_data, shift_range=0.05)
+        augmented_data.append(shifted_data)
         
         # Optionally apply rotation if applicable
         # rotated_data = rotate_data(layer_data, angle=15)

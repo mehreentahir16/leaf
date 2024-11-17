@@ -23,9 +23,10 @@ class Server:
         download_times = []
         training_times = []
         upload_times = []
-        gradient_magnitudes = {}
-        gradient_variances = {}
+        gradient_magnitudes = {c.id: [] for c in clients}
+        gradient_variances = {c.id: [] for c in clients}
         update_weights = {}
+        updates_list = []
 
         def train_client(c):
             c.model.set_params(self.model)
@@ -34,7 +35,7 @@ class Server:
                 sys_metrics[c.id][BYTES_READ_KEY] += c.model.size
                 sys_metrics[c.id][BYTES_WRITTEN_KEY] += c.model.size
                 sys_metrics[c.id][LOCAL_COMPUTATIONS_KEY] = comp
-                self.updates.append((c.id, num_samples, update))
+                updates_list.append((c.id, num_samples, update))
 
                 gradient_magnitudes[c.id] = grad_mag
                 gradient_variances[c.id] = grad_var
@@ -60,7 +61,7 @@ class Server:
         total_training_time = max(training_times) if training_times else 0
         total_upload_time = max(upload_times) if upload_times else 0
 
-        return sys_metrics, gradient_magnitudes, gradient_variances, update_weights, total_download_time, total_training_time, total_upload_time
+        return sys_metrics, gradient_magnitudes, gradient_variances, update_weights, updates_list, total_download_time, total_training_time, total_upload_time
 
     def update_model(self, flagged_clients=None):
         total_weight = 0.
@@ -127,7 +128,7 @@ class Server:
         losses = {}
 
         # Train and test each client to get accuracy
-        sys_metrics, gradient_magnitudes, gradient_variances, update_weights, _, _, _= self.train_model(clients=clients, num_epochs=1, simulate_delays=False)  
+        sys_metrics, gradient_magnitudes, gradient_variances, update_weights, _, _, _, _= self.train_model(clients=clients, num_epochs=1, simulate_delays=False)  
         accuracy_metrics = self.test_model(clients_to_test=clients, set_to_use='test')  # Get test metrics
 
         for c in clients:

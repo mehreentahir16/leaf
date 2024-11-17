@@ -11,6 +11,7 @@ class Client:
         self._model = model
         self.id = client_id
         self.group = group
+        self.trust_score = 0.5
         self.train_data = train_data
         self.eval_data = eval_data
         self.is_malicious = False
@@ -67,6 +68,8 @@ class Client:
         download_time = 0
         training_time = 0
         upload_time = 0
+        grad_magnitudes = {}
+        grad_variances = {}
         if simulate_delays==True: 
             initial_params = self.model.get_params()
             untrained_model_size = get_model_size(self.model)
@@ -112,12 +115,13 @@ class Client:
                 comp, update = self.model.train(data, num_epochs, num_data)
             pseudo_gradient = [update[i] - initial_params[i] for i in range(len(update))]
 
-        # Calculate gradient magnitude and variance
-        grad_magnitude = np.linalg.norm([np.linalg.norm(g) for g in pseudo_gradient])
-        grad_variance = np.var([np.linalg.norm(g) for g in pseudo_gradient])
+        # Calculate gradient magnitude and variance per layer
+
+        grad_magnitudes = [np.linalg.norm(g) for g in pseudo_gradient]
+        grad_variances = [np.var(g) for g in pseudo_gradient]
         
         num_train_samples = len(data['y'])
-        return comp, num_train_samples, update, download_time, training_time, upload_time, grad_magnitude, grad_variance
+        return comp, num_train_samples, update, download_time, training_time, upload_time, grad_magnitudes, grad_variances
     
     def flip_labels(self, config):
         flip_fraction = config['flip_fraction']
@@ -134,6 +138,44 @@ class Client:
             original_label = self.train_data['y'][idx]
             self.train_data['y'][idx] = flip_pairs.get(original_label, original_label)
 
+    def randomize_weights(self, update):
+        """
+        Completely randomize the model weights.
+        """
+        randomized_update = {}
+        for layer, weights in update.items():
+            # Assuming weights are numpy arrays
+            randomized_weights = np.random.uniform(
+                low=-1, high=1, size=weights.shape
+            ).astype(weights.dtype)
+            randomized_update[layer] = randomized_weights
+        return randomized_update
+
+    def inject_random_gradient(self, update, noise_level=0.1):
+        """
+        Inject random noise into the model updates.
+        """
+        noisy_update = {}
+        for layer, weights in update.items():
+            noise = np.random.normal(loc=0.0, scale=noise_level, size=weights.shape).astype(weights.dtype)
+            noisy_weights = weights + noise
+            noisy_update[layer] = noisy_weights
+        return noisy_update
+    
+    def perform_attack(self, update, attack_type):
+        """
+        Modify the update based on the attack type.
+        """
+        if attack_type == 'random_gradient':
+            print(f"Client {self.id}: Performing Random Gradient Injection.")
+            return self.inject_random_gradient(update)
+        elif attack_type == 'random_weights':
+            print(f"Client {self.id}: Performing Random Weight Updates.")
+            return self.randomize_weights(update)
+        else:
+            print(f"Client {self.id}: Unknown attack type. Sending normal update.")
+            return update 
+
     def test(self, set_to_use='test'):
         """Tests self.model on self.test_data.
         
@@ -148,6 +190,18 @@ class Client:
         elif set_to_use == 'test' or set_to_use == 'val':
             data = self.eval_data
         return self.model.test(data)
+    
+    def update_trust_score(self, is_malicious_action):
+        """Dynamically updates the trust score based on client behavior.
+        
+        Args:
+            is_malicious_action (bool): Whether the client has performed a malicious action.
+            penalty (float): The penalty to apply for a malicious action, defaulting to 0.1.
+        """
+        if is_malicious_action:
+            self.trust_score = max(0, self.trust_score - 0.1)  # Reduce score with a minimum bound of 0
+        else:
+            self.trust_score = min(1, self.trust_score + 0.05)
 
     @property
     def num_test_samples(self):

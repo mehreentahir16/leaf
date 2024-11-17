@@ -82,34 +82,3 @@ class LayerWiseAutoencoder:
             errors = sess.run(tf.reduce_mean(tf.square(self.reconstructed_outputs[i] - self.inputs[i]), axis=1), feed_dict=feed_dict)
             layer_errors.append(errors)
         return layer_errors
-
-from sklearn.model_selection import KFold
-import numpy as np
-
-# def cross_validate_autoencoder(X_data, bottleneck_dim, learning_rate, num_epochs, batch_size, K=5):
-#     kf = KFold(n_splits=K, shuffle=True, random_state=42)
-#     fold = 1
-#     validation_losses = []
-    
-#     for train_index, val_index in kf.split(X_data):
-#         print(f'Fold {fold}')
-#         X_train, X_val = X_data[train_index], X_data[val_index]
-        
-#         # Create a new graph for each fold
-#         graph = tf.Graph()
-#         with graph.as_default():
-#             autoencoder = Autoencoder(input_dim=X_data.shape[1], bottleneck_dim=bottleneck_dim, learning_rate=learning_rate)
-            
-#             with tf.Session(graph=graph) as sess:
-#                 sess.run(tf.global_variables_initializer())
-#                 autoencoder.train(sess, X_train, num_epochs=num_epochs, batch_size=batch_size)
-#                 # Compute validation loss
-#                 val_loss = sess.run(autoencoder.loss, feed_dict={autoencoder.X: X_val})
-#                 print(f'Validation Loss for fold {fold}: {val_loss:.6f}')
-#                 validation_losses.append(val_loss)
-        
-#         fold += 1
-    
-#     avg_val_loss = np.mean(validation_losses)
-#     print(f'Average Validation Loss: {avg_val_loss:.6f}')
-#     return avg_val_loss

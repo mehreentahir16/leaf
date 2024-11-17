@@ -227,6 +227,7 @@ def promethee_selection(my_round, clients, hardware_scores, network_scores, data
 
     # Extract client IDs directly from the clients list
     client_ids = [client.id for client in clients]
+    trust_scores = [client.trust_score for client in clients]
     
     # Use these client IDs to align and extract scores
     hardware_scores = [hardware_scores[client_id] for client_id in client_ids]
@@ -239,7 +240,7 @@ def promethee_selection(my_round, clients, hardware_scores, network_scores, data
     data_quality_scores = normalize_scores(np.array(data_quality_scores))
 
     # Convert the aligned and normalized scores into a 2D numpy array (n_clients, n_criteria)
-    X = np.array([hardware_scores, network_scores, data_quality_scores]).T
+    X = np.array([hardware_scores, network_scores, data_quality_scores, trust_scores]).T
     
     # Step 2: Define preference functions (simplest is a linear preference function)
     def preference_function(a, b, q=0.05, p=1):

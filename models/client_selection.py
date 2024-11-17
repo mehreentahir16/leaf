@@ -34,7 +34,7 @@ def select_clients(strategy, round_number, clients, client_num_samples, costs, h
     elif strategy == 'pow-d':
         selected_clients = client_selection_pow_d(clients, client_num_samples, losses, costs, d=50, num_clients=num_clients, budget=budget)
     elif strategy == 'promethee':
-        weights = np.array([0.1, 0.2, 0.7])
+        weights = np.array([0.1, 0.1, 0.4, 0.4])
         selected_clients = promethee_selection(round_number, clients=clients, hardware_scores=hardware_scores, network_scores=network_scores, 
                                                 data_quality_scores=data_quality_scores, weights=weights, costs=costs, num_clients=num_clients, budget=budget)
     else:

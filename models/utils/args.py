@@ -4,7 +4,7 @@ import argparse
 DATASETS = ['sent140', 'femnist', 'shakespeare', 'celeba', 'synthetic', 'reddit']
 SIM_TIMES = ['small', 'medium', 'large']
 CLIENT_SELECTION_STRATEGIES = ['random', 'greedy', 'price_based', 'resource_based', 'active', 'pow-d', 'promethee']  
-ATTACKS=['label-flip', 'random-noise']
+ATTACKS=['label_flip', 'random_gradient', 'random_weights']
 
 def generate_random_flip_pairs(num_labels):
     labels = list(range(num_labels))
@@ -71,7 +71,7 @@ def parse_args():
     parser.add_argument('--malicious-fraction',
                     help='Fraction of clients that are malicious (for testing purposes)',
                     type=float,
-                    default=0.2)
+                    default=0.0)
     parser.add_argument('--attack',
                     help="Type of attack to simulate",
                     type=str, 
