@@ -3,7 +3,7 @@ import os
 os.environ['TF_ENABLE_ONEDNN_OPTS'] = '0'
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 os.environ['CUDA_VISIBLE_DEVICES'] = ''  # Use CPU only
-
+import copy
 import importlib
 import numpy as np
 
@@ -111,6 +111,8 @@ def main():
 
     # Create clients
     clients = setup_clients(args.dataset, client_model, args.use_val_set)
+    # Initialize cumulative Shapley Values
+    server.cumulative_shapley_values = {client.id: 0.0 for client in clients}
     client_ids, client_groups, client_num_samples, hardware_scores, network_scores, data_quality_scores, costs, losses = server.get_clients_info(clients)
     print('Clients in Total: %d' % len(clients))
 
@@ -127,6 +129,7 @@ def main():
 
     # Define accuracy thresholds and initialize time tracking for each
     accuracy_thresholds = {50: None, 60: None, 70: None, 80: None, 90: None}
+    cumulative_shapley_values_over_time = []
  
     total_training_time = 0
     total_unique_samples = 0
@@ -160,6 +163,8 @@ def main():
         # Simulate server model training on selected clients' data
         sys_metrics, download_time, estimated_training_time, upload_time = server.train_model(num_epochs=args.num_epochs, batch_size=args.batch_size, minibatch=args.minibatch, simulate_delays=True)
         sys_writer_fn(i + 1, c_ids, sys_metrics, c_groups, c_num_samples)
+
+        server.compute_shapley_values_tmc(active_clients=server.selected_clients, num_samples=50, epsilon=0.01)
         
         # Update server model
         server.update_model()
@@ -178,6 +183,9 @@ def main():
                 if current_accuracy >= threshold and accuracy_thresholds[threshold] is None:
                     accuracy_thresholds[threshold] = total_training_time 
 
+        # Store cumulative Shapley Values after this round
+        cumulative_shapley_values_over_time.append(copy.deepcopy(server.cumulative_shapley_values))
+
     print("Model training time: ", total_training_time)
     
     # Save server model
@@ -195,7 +203,8 @@ def main():
         "time_to_reach_accuracy_thresholds": accuracy_thresholds,
         "number_of_clients": no_selected_clients,  
         "avg_number_of_samples": avg_num_samples,
-        "total_unique_training_samples": total_unique_samples
+        "total_unique_training_samples": total_unique_samples,
+        "cumulative_shapley_values": cumulative_shapley_values_over_time
     }
 
     file_name = f"results/data_{args.dataset}_selection_{args.client_selection_strategy}_clients_{args.clients_per_round}_batch{args.batch_size}_results.pkl"
@@ -250,16 +259,6 @@ def get_sys_writer_function(args):
 
     return writer_fn
 
-def calculate_test_accuracy(metrics, weights):
-    """Calculate the weighted average for test_accuracy."""
-    ordered_weights = [weights[c] for c in sorted(weights)]
-    ordered_accuracy_metric = [metrics[c]['accuracy'] for c in sorted(metrics)]
-    ordered_loss_metric = [metrics[c]['loss'] for c in sorted(metrics)]
-    test_accuracy = np.average(ordered_accuracy_metric, weights=ordered_weights)
-    test_loss = np.average(ordered_loss_metric, weights=ordered_weights)
-    return test_accuracy, test_loss
-
-
 def print_stats(num_round, server, clients, num_samples, args, writer, use_val_set):
     
     train_stat_metrics = server.test_model(clients, set_to_use='train')
@@ -270,8 +269,8 @@ def print_stats(num_round, server, clients, num_samples, args, writer, use_val_s
     test_stat_metrics = server.test_model(clients, set_to_use=eval_set)
     print_metrics(test_stat_metrics, num_samples, prefix='{}_'.format(eval_set))
     writer(num_round, test_stat_metrics, eval_set)
-    if eval_set == 'test':  # Ensure this matches how you determine the test set
-        test_accuracy, test_loss = calculate_test_accuracy(test_stat_metrics, num_samples)
+    if eval_set == 'test':  
+        test_accuracy, test_loss = server.calculate_test_accuracy(test_stat_metrics, num_samples)
         print("Calculated test_accuracy:", test_accuracy)
         print("calculated test_loss:", test_loss)
     return test_accuracy, test_loss
