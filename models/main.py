@@ -146,19 +146,6 @@ def main():
 
         print("===========Client info=============")
         print("selected client IDs", c_ids)
-        print("c_num_samples", c_num_samples)
-        print("c_losses", c_losses)
-
-        no_selected_clients = (len(server.selected_clients))
-        print("no_selected_clients", no_selected_clients)
-        avg_num_samples = sum(c_num_samples.values())/no_selected_clients
-        print("avg_num_samples", avg_num_samples)
-        new_clients = {client_id: samples for client_id, samples in c_num_samples.items() if client_id not in unique_client_ids}
-        total_unique_samples += sum(new_clients.values())
-        unique_client_ids.update(new_clients.keys())  # Update the set of unique client IDs
-
-        print(f"Total unique training samples so far: {total_unique_samples}")
-
 
         # Simulate server model training on selected clients' data
         sys_metrics, download_time, estimated_training_time, upload_time = server.train_model(num_epochs=args.num_epochs, batch_size=args.batch_size, minibatch=args.minibatch, simulate_delays=True)
@@ -201,13 +188,10 @@ def main():
         "losses": test_losses,
         "training_time": total_training_time,
         "time_to_reach_accuracy_thresholds": accuracy_thresholds,
-        "number_of_clients": no_selected_clients,  
-        "avg_number_of_samples": avg_num_samples,
-        "total_unique_training_samples": total_unique_samples,
         "cumulative_shapley_values": cumulative_shapley_values_over_time
     }
 
-    file_name = f"results/data_{args.dataset}_selection_{args.client_selection_strategy}_clients_{args.clients_per_round}_batch{args.batch_size}_results.pkl"
+    file_name = f"results/data_{args.dataset}_clients_{args.clients_per_round}_batch{args.batch_size}_results.pkl"
 
     # Ensure the directory exists
     os.makedirs(os.path.dirname(file_name), exist_ok=True)
